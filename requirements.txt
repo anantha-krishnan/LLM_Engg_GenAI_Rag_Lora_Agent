@@ -42,3 +42,5 @@ setuptools
 speedtest-cli
 sentence_transformers
 feedparser
+python-magic
+nbimporter

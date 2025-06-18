@@ -16,7 +16,7 @@ import nbimporter
 
 import utility_fncs
 from global_vars import *
-
+import global_vars
 
 # In[3]:
 
@@ -29,15 +29,7 @@ import google.generativeai
 
 
 load_dotenv(override=True)
-openai_api_key=os.getenv('OPEN_API_KEY')
-google_api_key=os.getenv('GOOGLE_API_KEY')
-model_openai_4omini = 'gpt-4o-mini'
-model_openai_4onano = 'gpt-4.1-nano'
-model_openai_o3mini = 'o3-mini'
-model_genimi = 'gemini-2.0-flash'
-model_gemini_2_5_flash_4_17 = "gemini-2.5-flash-preview-04-17"
-model_gemini_2_5_flash_5_20 = "gemini-2.5-flash-preview-05-20"
-model_gemini_2_5_pro_preview='gemini-2.5-pro-preview-06-05'
+
 
 
 # In[5]:
@@ -128,14 +120,19 @@ def start_conv():
 
 
 # In[10]:
-
-
+def set_gpt_caller(func):    
+    global_vars.gpt_caller = func    
+    
+def set_gemini_caller(func):
+    global_vars.gemini_caller = func
+    
+    
 def dispatch_ai_call(qt,file,model):
-
+    
     if model=='GPT':
-        yield from call_gpt(qt, file)
+        yield from global_vars.gpt_caller(qt, file)
     elif model=='GEMINI':
-        yield from call_google_gemini(qt,file)
+        yield from global_vars.gemini_caller(qt,file)
 
 
 
