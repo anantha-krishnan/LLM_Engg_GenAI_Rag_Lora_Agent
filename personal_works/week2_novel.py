@@ -36,7 +36,7 @@ load_dotenv(override=True)
 
 
 openai = OpenAI()
-google.generativeai.configure()
+google.generativeai.configure(api_key=google_api_key)
 
 
 # In[6]:
@@ -130,9 +130,11 @@ def set_gemini_caller(func):
 def dispatch_ai_call(qt,file,model):
     
     if model=='GPT':
-        yield from global_vars.gpt_caller(qt, file)
+        #yield from
+        return global_vars.gpt_caller(qt, file)
     elif model=='GEMINI':
-        yield from global_vars.gemini_caller(qt,file)
+        #yield from
+        return global_vars.gemini_caller(qt,file)
 
 
 

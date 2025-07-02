@@ -1,4 +1,8 @@
 import os
+import vertexai
+from vertexai.preview.vision_models import ImageGenerationModel, Image
+from IPython.display import Image as IPythonImage
+
 system_gpt_msg = "you are a helpful assistant. Reply in markdown. You're not just a command-taker; you're a helpful assistant. If you think a picture would make your answer better, you have a tool for that. Use it"
 system_gemini_msg = "You are a funny helpful assistant. Reply in markdown."
 prompt_gpt=[
@@ -16,6 +20,10 @@ model_genimi = 'gemini-2.0-flash'
 model_gemini_2_5_flash_4_17 = "gemini-2.5-flash-preview-04-17"
 model_gemini_2_5_flash_5_20 = "gemini-2.5-flash-preview-05-20"
 model_gemini_2_5_pro_preview='gemini-2.5-pro-preview-06-05'
+model_gemini_1_5_pro='gemini-1.5-pro'
+model_gemini_2_0_flash_image='gemini-2.0-flash-preview-image-generation'
+gemini_text_model = model_gemini_1_5_pro
+gemini_image_model = model_gemini_2_0_flash_image
 
 gpt_caller=None
 gemini_caller=None
