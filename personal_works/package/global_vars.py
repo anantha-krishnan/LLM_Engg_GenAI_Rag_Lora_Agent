@@ -3,6 +3,7 @@ import os
 #from vertexai.preview.vision_models import ImageGenerationModel, Image
 from IPython.display import Image as IPythonImage
 import anthropic
+from dotenv import load_dotenv
 
 system_gpt_msg = "you are a helpful assistant. Reply in markdown. You're not just a command-taker; you're a helpful assistant. If you think a picture would make your answer better, you have a tool for that. Use it"
 system_gemini_msg = "You are a funny helpful assistant. Reply in markdown."
@@ -10,7 +11,8 @@ prompt_gpt=[
     {"role":"system", "content":system_gpt_msg}
 ]
 
-
+load_dotenv('C:/Projects/llm_engg/llm_engineering/.env',override=True)
+        
 openai_api_key=os.getenv('OPEN_API_KEY')
 google_api_key=os.getenv('GOOGLE_API_KEY')
 model_openai_4_5_preview = 'gpt-4.5-preview'

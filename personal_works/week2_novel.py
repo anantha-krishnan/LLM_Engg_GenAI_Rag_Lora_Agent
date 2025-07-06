@@ -72,8 +72,20 @@ def call_gpt(msg, filedata=None):
     #reply=completion.choices[0].message.content
     prompt_gpt.append({"role":"assistant", "content":response})
     
-
-
+claude = anthropic.Anthropic()
+def optimize_claude(python):
+    result = claude.messages.stream(
+        model=CLAUDE_MODEL,
+        max_tokens=2000,
+        system=system_message,
+        messages=[{"role": "user", "content": user_prompt_for(python)}],
+    )
+    reply = ""
+    with result as stream:
+        for text in stream.text_stream:
+            reply += text
+            print(text, end="", flush=True)
+    #write_output(reply)
 
 # In[8]:
 
