@@ -14,6 +14,7 @@ from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
 
 import global_vars
+from app_utils import AppUtils
 # ==============================================================================
 # SECTION 1: FOUNDATION - SETUP RAG RETRIEVER
 # ==============================================================================
@@ -286,13 +287,21 @@ agent_executor = AgentExecutor(
     handle_parsing_errors=True,
     max_iterations=15
 )
+def gradio_interface(task,file_path, model):
+#print("\n--- Testing Semantic Search and Code Modification ---")
+#task = """
+#Find the function in the Gemini agent file that is responsible for adding a new tool to the list of available tools.
+#Then, modify it to print the name of the function that is being added.
+#"""
+    result = agent_executor.invoke({"input": task})
+    return result['output'], None
 
-print("\n--- Testing Semantic Search and Code Modification ---")
-task = """
-Find the function in the Gemini agent file that is responsible for adding a new tool to the list of available tools.
-Then, modify it to print the name of the function that is being added.
-"""
-result = agent_executor.invoke({"input": task})
+# Use the utility to create the launcher
+launcher = AppUtils.get_gradio_multi_modal_launcher(gradio_interface)
+
+print("Launching Gradio interface... Go to the provided URL in your browser.")
+# The Gradio app will be available at a local URL like http://127.0.0.1:7860
+launcher.launch()
+
 del llm
-print("\nFinal Answer:", result['output'])
 print("-" * 50)

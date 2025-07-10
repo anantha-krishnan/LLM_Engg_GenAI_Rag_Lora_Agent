@@ -53,7 +53,7 @@ class OpenAIAgent:
 
     def add_tool(self, func: Callable):
         """
-        public facing function to add a callable python function as a tool for openAI
+        Function to add a new tool to the list of tools for OpenAI API calls
 
         Args:
             func (callable): The user's callable function
