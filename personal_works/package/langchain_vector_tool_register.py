@@ -224,8 +224,7 @@ Your process is very strict:
 If the user asks to perform a task that a registered function can do, you MUST use that function.
 """
 hybrid_prompt = PromptTemplate.from_template(react_prompt.template).partial(instructions=new_instruction)
-# llm = OpenAI(temperature=0, model=global_vars.model_openai_4omini) # Your LLM init
-llm = OpenAI(temperature=0, model="gpt-4o-mini") # Using a placeholder for demonstration
+llm = OpenAI(temperature=0, model=global_vars.model_openai_4omini) # Your LLM init
 hybrid_agent = create_react_agent(llm, tools, hybrid_prompt)
 agent_executor = AgentExecutor(agent=hybrid_agent, tools=tools, max_iterations=10, verbose=True, handle_parsing_errors=True)
 

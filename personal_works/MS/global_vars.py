@@ -24,8 +24,11 @@ load_dotenv(env_path,override=True)
 
 openai_api_key=os.getenv('OPENAI_API_KEY')
 google_api_key=os.getenv('GOOGLE_API_KEY')
+ANTHROPIC_api_key=os.getenv('ANTHROPIC_API_KEY')
+HF_token=os.getenv('HF_TOKEN')
 model_openai_4_5_preview = 'gpt-4.5-preview'
 model_openai_4onano = 'gpt-4.1-nano'
+model_openai_4o = 'gpt-4o'
 model_openai_o3mini = 'o3-mini'
 model_genimi = 'gemini-2.0-flash'
 model_gemini_2_5_flash_4_17 = "gemini-2.5-flash-preview-04-17"

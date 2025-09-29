@@ -4,12 +4,6 @@ import websockets
 import json
 import traceback
 
-# IMPORTANT SECURITY WARNING: 
-# This client uses exec() to run code sent from the server.
-# This is INHERENTLY INSECURE and should ONLY be used in a trusted,
-# sandboxed environment where you control both the server and the client.
-# DO NOT expose this client to an untrusted network.
-
 async def execute_job(function_code, kwargs):
     """
     Dynamically executes a function from a string and returns the result.
@@ -18,7 +12,7 @@ async def execute_job(function_code, kwargs):
         # Create a local scope for the execution
         local_scope = {}
         # Define the function within the local scope
-        exec(function_code, globals(), local_scope)
+        exec(function_code, local_scope)
         
         # The function name is the first word after 'def'
         function_name = function_code.split('def ')[1].split('(')[0].strip()
