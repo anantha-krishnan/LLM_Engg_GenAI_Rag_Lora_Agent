@@ -34,23 +34,23 @@ def validate_user_function(function_code: str) -> Tuple[bool, str, ast.AST]:
 
         # Rule 1: Must be a single function
         if not tree.body or not isinstance(tree.body[-1], ast.FunctionDef):
-            return False, "Error: The code must be a single, valid Python function."
+            return False, "Error: The code must be a single, valid Python function.", tree
         
         func_def = tree.body[-1]
 
         # Rule 2: All arguments must have type hints
         for arg in func_def.args.args:
             if arg.annotation is None:
-                return False, f"Error: Argument '{arg.arg}' in function '{func_def.name}' is missing a type hint."
+                return False, f"Error: Argument '{arg.arg}' in function '{func_def.name}' is missing a type hint.", tree
 
         # Rule 3: Return type hint must be dict or Dict
         if func_def.returns is None:
-            return False, f"Error: Function '{func_def.name}' is missing a return type hint. It must be '-> dict:'."
-        
+            return False, f"Error: Function '{func_def.name}' is missing a return type hint. It must be '-> dict:'.", tree
+
         # ast.unparse is the modern way to get the annotation as a string
         return_type_str = ast.unparse(func_def.returns)
         if return_type_str not in ['dict', 'Dict']:
-            return False, f"Error: Function '{func_def.name}' must have a return type hint of 'dict' or 'Dict', but found '{return_type_str}'."
+            return False, f"Error: Function '{func_def.name}' must have a return type hint of 'dict' or 'Dict', but found '{return_type_str}'.", tree
 
     except SyntaxError as e:
         return False, f"Syntax Error: The provided code is not valid Python. Details: {e}", None
@@ -63,6 +63,7 @@ def validate_user_function(function_code: str) -> Tuple[bool, str, ast.AST]:
 
 # Global dictionary to store user-defined functions
 USER_FUNCTIONS = {}
+HELPER_FUNCTIONS = {}
 
 # Original docstring for the run tool, used as a template
 RUN_TOOL_ORIGINAL_DOCSTRING = "Runs a previously registered user function on the user's machine via a WebSocket."
@@ -112,7 +113,7 @@ def run_user_function_via_websocket(json_input: str) -> str:
     # --- WebSocket Communication ---
     async def _run_job_async():
         uri = "ws://localhost:8765/run_job"
-        payload = {"function_code": function_info["code"], "kwargs": kwargs}
+        payload = {"function_code": function_info["code"], "kwargs": kwargs, "helper_functions": [hf["code"] for hf in HELPER_FUNCTIONS.values()]}
         try:
             async with websockets.connect(uri) as websocket:
                 await websocket.send(json.dumps(payload))
@@ -136,16 +137,38 @@ def run_user_function_via_websocket(json_input: str) -> str:
 class RegisterToolInput(BaseModel):
     function_code: str = Field(description="A string containing the complete Python function, including the 'def' signature, docstring, and body.")
 
-# @tool("register_user_function", args_schema=RegisterToolInput)
-def register_user_function(tree: ast.AST) -> str:
-    """Parses and registers a new Python function from a multi-line string to make it available for execution."""
+def unparse_code(tree: ast.AST) -> str:
+    """Converts an AST back to source code."""
     try:
-        
         func_def = tree.body[-1]
         func_name = func_def.name
         docstring = ast.get_docstring(func_def) or "No docstring provided."
         # get the cleaned code again
         cleaned_code = ast.unparse(tree)    
+        # Store the function details
+        return cleaned_code, func_name, docstring
+    except Exception as e:
+        raise ValueError(f"Could not unparse AST to code. Details: {e}")
+    
+def save_helper_function(tree: ast.AST) -> str:
+    """
+    Saves a helper function to a local file named 'helper_functions.py'.
+    If the file already exists, it appends the new function.
+    """
+    try:
+        cleaned_code, func_name, docstring = unparse_code(tree)
+        HELPER_FUNCTIONS[func_name] = {
+            "code": cleaned_code, 
+        }
+        return "Success: Helper function saved to 'helper_functions.py'."
+    except Exception as e:
+        return f"Error: Could not save helper function. Details: {e}"
+    
+# @tool("register_user_function", args_schema=RegisterToolInput)
+def register_user_function(tree: ast.AST) -> str:
+    """Parses and registers a new Python function from a multi-line string to make it available for execution."""
+    try:
+        cleaned_code, func_name, docstring = unparse_code(tree)
         # Store the function details
         USER_FUNCTIONS[func_name] = {
             "code": cleaned_code, 

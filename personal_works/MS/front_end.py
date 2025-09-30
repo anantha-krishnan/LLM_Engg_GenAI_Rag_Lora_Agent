@@ -20,7 +20,7 @@ from pydantic import create_model
 
 
 # Local imports
-from code_execution_agent import create_code_executor, validate_user_function, register_user_function
+from code_execution_agent import create_code_executor, validate_user_function, register_user_function, save_helper_function
 import global_vars
 from session_state import OnboardingState, SESSION_STATE, reset_session
 from tool_input_parser import RobustTool
@@ -160,17 +160,33 @@ def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tu
         return "Hello! Let's build a specialized agent. First, please provide its core instructions (the step-by-step logic it should follow). When you're finished, type `/done` on a new line.", None
     if state in [OnboardingState.AWAITING_INSTRUCTIONS, OnboardingState.COLLECTING_INSTRUCTIONS]:
         if message.strip().lower() == "/done":
-            SESSION_STATE["state"] = OnboardingState.AWAITING_FUNCTIONS
-            return ("Instructions saved. Now, let's add the Python functions this agent will use as tools.\n\n"
-                    "**IMPORTANT RULES for functions:**\n"
-                    "1. All arguments must have type hints (e.g., `name: str`).\n"
-                    "2. The function must have a return type hint of `-> dict:` or `-> Dict:`.\n"
-                    "3. The function must actually return a dictionary.\n\n"
-                    "Please provide the code for the first function."), None
+            SESSION_STATE["state"] = OnboardingState.AWAITING_HELPERS
+            return ("Instructions saved. Now, let's add the helper Python functions that will be needed for your functions.\n\n"), None
         else:
             SESSION_STATE["instructions"] += message + "\n"
             SESSION_STATE["state"] = OnboardingState.COLLECTING_INSTRUCTIONS
             return "Instruction line added. Continue adding to the instructions or type `/done` to finish.", None
+    if state in [OnboardingState.AWAITING_HELPERS, OnboardingState.COLLECTING_HELPERS]:
+        if message.strip().lower() == "/done":
+            SESSION_STATE["state"] = OnboardingState.AWAITING_FUNCTIONS
+            msg="Now, please provide the main Python functions that the orchestrator will use as tools.\n\n"
+            msg+="Remember the rules:\n"
+            msg+="1. All arguments must have type hints (e.g., `name: str`).\n"
+            msg+="2. The function must have a return type hint of `-> dict:` or `-> Dict:`.\n"
+            msg+="3. The function must actually return a dictionary.\n\n"
+            msg+="Please provide the code for the first function."
+            return msg, None
+        else:
+            # Validate helper functions similarly if desired
+            is_valid, message, tree = validate_user_function(message)
+            if not is_valid:
+                print(f"   [Validation] Failed: {message}")
+            else:                
+                print(f"   [Validation] {message}")
+            # save helper function regardless of validation for now as it will be used internally by user directly
+            save_helper_function(tree)
+            SESSION_STATE["state"] = OnboardingState.COLLECTING_HELPERS
+            return "Helper function added. Continue adding helper functions or type `/done` to finish.", None
     if state in [OnboardingState.AWAITING_FUNCTIONS, OnboardingState.COLLECTING_FUNCTIONS]:
         if message.strip().lower() == "/done":
             if not agent_system.orchestrator_tools:
@@ -220,14 +236,14 @@ if __name__ == "__main__":
     print("="*50)
     print("🚀 Your agent application is ready!")
     print("1. Run the websocket bridge in another terminal: python 2_websocket_bridge.py")
-    print("2. Run this app with uvicorn: uvicorn 5_main_app:app --reload")
+    print("2. Run this app with uvicorn: uvicorn front_end:app --reload")
     print("3. Open your browser to http://127.0.0.1:8000")
     print("="*50)
 
 """
 Follow this exact algorithm:
 You are an expert optimization engineer for Altair MotionSolve. Your goal is to find the optimal (largest) solver time step (h_max) for a user's model that keeps the simulation result difference below a specified threshold.
-1. **Golden Run**: First, perform a baseline simulation with a very small h_max (e.g., 1e-5) to get a "golden" result file. This is your ground truth. Call the tool 'analyze_simulation_results' with mode='PRE' to establish the baseline
+1. **Golden Run**: First, perform a baseline simulation with a very small h_max (e.g., 1e-5) and mode='PRE' to get a "golden" result file. This is your ground truth. Call the tool 'analyze_simulation_results' with mode='PRE' to establish the baseline
 2. **Iterate and Compare**: Run a new simulation with test_h_max and mode='NORM'. In each test Analyze the dictionary returned by the tool. If the value for the key 'percentage_difference' is less than 5.0, your job is done. Your final answer is the last h_max you used.
 3. **Decide and Adjust**:
  If the difference is less than the user's threshold (e.g., 5%): This test_h_max is valid. It means you might be able to use an even larger step. Therefore, store this as a potential answer and set the lower bound of your search range to test_h_max.
@@ -237,5 +253,5 @@ You are an expert optimization engineer for Altair MotionSolve. Your goal is to 
 """  
 
 """
-The file FullVehNoDriver_saved.xml is the input to motionsolve. Your goal is to find the optimal (largest) solver time step (`h_max`) for this input file that keeps the simulation result difference below 5%.
+The file c11x001m.xml is the input to motionsolve. I am providing a zip file named qa.zip which contains the necessary folder structure for my tool 'analyze_simulation_results' . The file c11x001m.xml is present at the correct location as required by my tool. Your goal is to find the optimal (largest) solver time step (`h_max`) for this input file that keeps the simulation result difference below 5%. First run with mode='PRE', h_max=0.001, xml_filename='c11x001m.xml' to get the golden reference result, then iteratively run with mode='NORM' and different `h_max` values to find the largest acceptable `h_max`. 
 """

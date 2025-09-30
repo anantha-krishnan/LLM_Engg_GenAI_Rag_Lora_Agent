@@ -12,6 +12,8 @@ class OnboardingState:
     START = "START"
     AWAITING_INSTRUCTIONS = "AWAITING_INSTRUCTIONS"
     COLLECTING_INSTRUCTIONS = "COLLECTING_INSTRUCTIONS"
+    AWAITING_HELPERS = "AWAITING_HELPERS"
+    COLLECTING_HELPERS = "COLLECTING_HELPERS"
     AWAITING_FUNCTIONS = "AWAITING_FUNCTIONS"  # The initial prompt for the first function
     COLLECTING_FUNCTIONS = "COLLECTING_FUNCTIONS" # Loop for subsequent functions until '/done'
     AGENT_READY = "AGENT_READY"
@@ -19,7 +21,8 @@ class OnboardingState:
 # This dictionary acts as a simple, in-memory session.
 SESSION_STATE = {
     "state": OnboardingState.START,
-    "instructions": ""
+    "instructions": "",
+    "helper_functions": [],
 }
 
 
@@ -29,6 +32,7 @@ def reset_session():
     print("Session state has been reset.")
     SESSION_STATE["state"] = OnboardingState.START
     SESSION_STATE["instructions"] = ""
+    SESSION_STATE["helper_functions"] = []
     # Create a unique directory for this session to handle file uploads
     session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     work_dir = os.path.join("sessions", session_id)
