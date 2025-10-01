@@ -24,6 +24,7 @@ from code_execution_agent import create_code_executor, validate_user_function, r
 import global_vars
 from session_state import OnboardingState, SESSION_STATE, reset_session
 from tool_input_parser import RobustTool
+from llm_call_back import VerboseToUIHandler
 # Initialize the first session on startup
 reset_session()
 
@@ -36,11 +37,33 @@ class HierarchicalAgentSystem:
         self.orchestrator_tools: List[Tool] = []
         self.orchestrator_agent_executor = None
         self.is_orchestrator_created = False
+        self.current_callbacks = None
 
     def _parse_specialist_output(self, agent_output: str) -> str:
         match = re.search(r"Execution Result:\s*(\{.*\})", str(agent_output), re.DOTALL)
         return match.group(1) if match else agent_output
 
+    def _tool_logic(self,func_name: str,**kwargs):
+        """
+        This wrapper calls the specialist agent. It receives clean kwargs
+        because the RobustStructuredTool has already parsed and validated them.
+        """
+        # if "session_work_dir" not in kwargs:
+            # kwargs["session_work_dir"] = SESSION_STATE["work_dir"]
+        prompt_for_specialist = f"Run the function '{func_name}' with these arguments in a JSON string: {json.dumps(kwargs)}"
+        log_callback = self.current_callbacks[0] if self.current_callbacks else None
+
+        if log_callback:
+        # Manually add a log entry to clearly mark the start of the inner agent's work
+            log_callback.add_log_entry(f"\n> [Orchestrator] Delegating to Specialist Agent to run tool: `{func_name}`...")
+
+        specialist_result = self.code_agent_executor.invoke({"input": prompt_for_specialist},
+                                                            config={"callbacks": self.current_callbacks})
+        
+        if log_callback:
+        # Manually add a log entry to mark the end of the inner agent's work
+            log_callback.add_log_entry(f"> [Orchestrator] Specialist Agent finished.")
+        return self._parse_specialist_output(specialist_result['output'])
 
     def register_tool_for_orchestrator(self, function_code: str):
         print(f"\n--- Attempting to register new Orchestrator tool ---")
@@ -63,26 +86,16 @@ class HierarchicalAgentSystem:
             return f"❌ Specialist failed to register function: {result}"
         print(f"   [Specialist] Successfully registered '{func_name}'.")
         
-        def _tool_logic(**kwargs):
-            """
-            This wrapper calls the specialist agent. It receives clean kwargs
-            because the RobustStructuredTool has already parsed and validated them.
-            """
-            if "session_work_dir" not in kwargs:
-                kwargs["session_work_dir"] = SESSION_STATE["work_dir"]
-            
-            prompt_for_specialist = f"Run the function '{func_name}' with these arguments in a JSON string: {json.dumps(kwargs)}"
-            specialist_result = self.code_agent_executor.invoke({"input": prompt_for_specialist})
-            return self._parse_specialist_output(specialist_result['output'])
-
-        new_tool = RobustTool(name=func_name, description=docstring, func=_tool_logic, args_schema=args_schema)
         
+        tool_func = lambda **kwargs: self._tool_logic(func_name=func_name, **kwargs)
+        new_tool = RobustTool(name=func_name, description=docstring, func=tool_func, args_schema=args_schema)
+
         self.orchestrator_tools.append(new_tool)
         return f"✅ Tool '{func_name}' registered successfully."
 
     def create_orchestrator(self, instructions: str):
         if not self.orchestrator_tools:
-            return "❌ Cannot create orchestrator: No tools have been registered."
+            tool_instructions = "No tools have been registered."
         print(f"\n--- Creating new Orchestrator Agent ---")
         tool_instructions = (
             "When you use a tool, you MUST provide the arguments as a flat JSON dictionary. DO NOT add comments or extra text."
@@ -108,7 +121,7 @@ class HierarchicalAgentSystem:
 
     def run_orchestrator(self, goal: str, uploaded_file_paths: List[str] = None):
         if not self.orchestrator_agent_executor:
-            return "❌ Orchestrator has not been created yet."
+            return "❌ Orchestrator has not been created yet.", "No logs available."
             
         if uploaded_file_paths:
             filenames = [os.path.basename(p) for p in uploaded_file_paths]
@@ -117,11 +130,22 @@ class HierarchicalAgentSystem:
             goal += (f" The user has uploaded the following files: {filenames}. "
                      f"These files are all located in the session's working directory at '{work_dir}'. "
                      f"The user's prompt will specify which file is the primary input. "
-                     "You must pass the full path of the primary input file to the appropriate tool argument.")
+                     "You must pass the name of the primary input file to the appropriate tool argument.")
             
         print(f"\n--- EXECUTING ORCHESTRATOR with GOAL: {goal} ---")
-        result = self.orchestrator_agent_executor.invoke({"input": goal})
-        return result.get('output', "Completed with no output.")
+        log_callback = VerboseToUIHandler()
+        self.current_callbacks = [log_callback]
+        try:
+            result = self.orchestrator_agent_executor.invoke({"input": goal},
+                                                             config={"callbacks": self.current_callbacks})
+        finally:
+            self.current_callbacks = None
+        verbose_logs = log_callback.get_logs()
+        
+        final_output = result.get('output', "Completed with no output.")
+        
+        # 4. Return both the final output and the logs
+        return final_output, verbose_logs
 
 
 # --- System Singleton & UI Logic (with updated file handling) ---
@@ -149,23 +173,25 @@ def process_uploaded_file(file_objs: List[Any]) -> List[str]:
 
 def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tuple[str, Any]:
     state = SESSION_STATE["state"]
-    
+    response = None
+    logs = " "
     if state == OnboardingState.AGENT_READY:
         # The file is processed inside user_interaction before this is called
-        response = agent_system.run_orchestrator(message, uploaded_files) # uploaded_files is the path now
-        return response, None
+        response, logs = agent_system.run_orchestrator(message, uploaded_files) # uploaded_files is the path now
+        logs = f"```log\n{logs}\n```"
+        # return response, formatted_logs
 
     if state == OnboardingState.START:
         SESSION_STATE["state"] = OnboardingState.AWAITING_INSTRUCTIONS
-        return "Hello! Let's build a specialized agent. First, please provide its core instructions (the step-by-step logic it should follow). When you're finished, type `/done` on a new line.", None
+        response = "Hello! Let's build a specialized agent. First, please provide its core instructions (the step-by-step logic it should follow). When you're finished, type `/done` on a new line."
     if state in [OnboardingState.AWAITING_INSTRUCTIONS, OnboardingState.COLLECTING_INSTRUCTIONS]:
         if message.strip().lower() == "/done":
             SESSION_STATE["state"] = OnboardingState.AWAITING_HELPERS
-            return ("Instructions saved. Now, let's add the helper Python functions that will be needed for your functions.\n\n"), None
+            response = "Instructions saved. Now, let's add the helper Python functions that will be needed for your functions.\n\n"
         else:
             SESSION_STATE["instructions"] += message + "\n"
             SESSION_STATE["state"] = OnboardingState.COLLECTING_INSTRUCTIONS
-            return "Instruction line added. Continue adding to the instructions or type `/done` to finish.", None
+            response = "Instruction line added. Continue adding to the instructions or type `/done` to finish."
     if state in [OnboardingState.AWAITING_HELPERS, OnboardingState.COLLECTING_HELPERS]:
         if message.strip().lower() == "/done":
             SESSION_STATE["state"] = OnboardingState.AWAITING_FUNCTIONS
@@ -175,7 +201,7 @@ def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tu
             msg+="2. The function must have a return type hint of `-> dict:` or `-> Dict:`.\n"
             msg+="3. The function must actually return a dictionary.\n\n"
             msg+="Please provide the code for the first function."
-            return msg, None
+            response = msg
         else:
             # Validate helper functions similarly if desired
             is_valid, message, tree = validate_user_function(message)
@@ -186,27 +212,33 @@ def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tu
             # save helper function regardless of validation for now as it will be used internally by user directly
             save_helper_function(tree)
             SESSION_STATE["state"] = OnboardingState.COLLECTING_HELPERS
-            return "Helper function added. Continue adding helper functions or type `/done` to finish.", None
+            response = "Helper function added. Continue adding helper functions or type `/done` to finish."
     if state in [OnboardingState.AWAITING_FUNCTIONS, OnboardingState.COLLECTING_FUNCTIONS]:
         if message.strip().lower() == "/done":
             if not agent_system.orchestrator_tools:
-                return "❌ You haven't registered any functions. Please add at least one function before finishing.", None
+                response = "❌ You haven't registered any functions. Please add at least one function before finishing."
             creation_response = agent_system.create_orchestrator(SESSION_STATE["instructions"])
             if "✅" in creation_response:
                 SESSION_STATE["state"] = OnboardingState.AGENT_READY
-                return (f"{creation_response}\n\n"
-                        "**The specialized agent is now ready. What is its first high-level goal?**"), None
+                response = (f"{creation_response}\n\n"
+                f"**The specialized agent is now ready. What is its first high-level goal?**")
             else:
-                return creation_response, None
+                response = creation_response
         else:
             tool_response = agent_system.register_tool_for_orchestrator(message)
             SESSION_STATE["state"] = OnboardingState.COLLECTING_FUNCTIONS
-            return f"{tool_response}\n\nPlease provide the next function, or type `/done` when you have added all necessary functions.", None
-    return "An unknown error occurred with the conversation state.", None
+            response = f"{tool_response}\n\nPlease provide the next function, or type `/done` when you have added all necessary functions."
+    if not response:
+        response = "An unknown error occurred with the conversation state."
+    return response, logs
 
 with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator") as demo:
     gr.Markdown("# Dynamic Agent Orchestrator\n A conversational interface to build and command specialized AI agents.")
-    chatbot = gr.Chatbot(label="Conversation", height=600)
+    with gr.Row():
+        chatbot = gr.Chatbot(label="Conversation", height=600)
+    with gr.Row():
+        with gr.Accordion("Agent's Thought Process", open=False):
+            agent_log = gr.Markdown("Agent logs will appear here...")
     with gr.Row():
         msg_textbox = gr.Textbox(label="Your Message", placeholder="Start by describing the agent you want to build...", scale=7)
         file_uploader = gr.File(label="Upload Input Files (XML, etc.)",
@@ -219,15 +251,18 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator") as de
         file_path_on_server = process_uploaded_file(uploaded_file)
         
         # Get the response from our stateful chat function, passing the path
-        return_st = chat_responder(user_message, chat_history, file_path_on_server)
-        bot_message = return_st[0]
+        bot_message, verbose_logs = chat_responder(user_message, chat_history, file_path_on_server)
 
         chat_history.append((user_message, bot_message))
-        return "", chat_history, None # Clear inputs
+        return "", chat_history, verbose_logs, None # Clear inputs
 
-    msg_textbox.submit(user_interaction, [msg_textbox, chatbot, file_uploader], [msg_textbox, chatbot, file_uploader])
+    msg_textbox.submit(user_interaction,
+                       [msg_textbox, chatbot, file_uploader],
+                       [msg_textbox, chatbot, agent_log, file_uploader])
     # The clear button now also creates a new working directory
-    clear_button.click(lambda: (reset_session(), None), None, [chatbot,file_uploader], queue=False)
+    clear_button.click(lambda: (reset_session(), None, None),
+                       None,
+                       [chatbot,file_uploader,agent_log], queue=False)
 
 app = fastapi.FastAPI(title="Agent Orchestrator API")
 app = gr.mount_gradio_app(app, demo, path="/")
@@ -251,7 +286,7 @@ You are an expert optimization engineer for Altair MotionSolve. Your goal is to 
 4. **Termination**: Continue this process for a fixed number of iterations (e.g., 10-15 is usually enough for good precision) or until the search range is very small.
 5. **Report**: Once finished, clearly state the largest h_max you found that satisfied the condition and conclude your work.
 """  
-
+# you are specialist at addition. you will receive two numbers from user. Send it to the tool for addition. Reply with the result from the tool
 """
-The file c11x001m.xml is the input to motionsolve. I am providing a zip file named qa.zip which contains the necessary folder structure for my tool 'analyze_simulation_results' . The file c11x001m.xml is present at the correct location as required by my tool. Your goal is to find the optimal (largest) solver time step (`h_max`) for this input file that keeps the simulation result difference below 5%. First run with mode='PRE', h_max=0.001, xml_filename='c11x001m.xml' to get the golden reference result, then iteratively run with mode='NORM' and different `h_max` values to find the largest acceptable `h_max`. 
+The file c11x001m.xml is the input to motionsolve. I have already hard coded the qa working directory in the tool 'analyze_simulation_results'. This directory contains the necessary folder structure. The file c11x001m.xml is present at the correct location as required by the tool. Your goal is to find the optimal (largest) solver time step (`h_max`) for this input file that keeps the simulation result difference below 5%. First run with mode='PRE', h_max=0.001, xml_filename='c11x001m.xml' to get the golden reference result, then iteratively run with mode='NORM' and different `h_max` values to find the largest acceptable `h_max`. 
 """

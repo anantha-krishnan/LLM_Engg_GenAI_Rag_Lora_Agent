@@ -2,10 +2,11 @@
 
 def print_error(message: str):
     """output error message."""
-    DEBUG_FILE="C:\\Users\\anantk\\Downloads\\qa\\debug_log.txt"
+    #DEBUG_FILE="C:\\Users\\anantk\\Downloads\\qa\\debug_log.txt"
 
-    with open(DEBUG_FILE, "a") as debug_file:
-        debug_file.write(f"DEBUG: {message}\n")
+    # with open(DEBUG_FILE, "a") as debug_file:
+        # debug_file.write(f"DEBUG: {message}\n")
+    print(f"DEBUG: {message}")
     
 import subprocess
 from typing import Dict
@@ -17,6 +18,69 @@ from lxml import etree
 from typing import Dict
 from pathlib import Path
 
+def get_model_from_xml(xml_filename: str, qa_folder: Path) -> dict:
+    """
+    Extracts the model name from the given XML filename.
+    Assumes the model name is the filename without the extension.
+    
+    Args:
+        xml_filename (str): The XML filename (e.g., 'model.xml').
+    Returns:
+        dict: A dictionary with 'status', 'model_path' and 'message'
+    """
+    ret_value = {"status": "success", "model_path": "", "message": ""}
+    try:
+        qa_cmd_folder = qa_folder / "qa_cmd"
+        if not qa_cmd_folder.exists():
+            ret_value["status"] = "error"
+            ret_value["message"] = f"QA command folder '{qa_cmd_folder}' does not exist."
+            return ret_value
+        parser = etree.XMLParser(remove_blank_text=False)
+        for file in qa_cmd_folder.glob("*.xml"):
+            tree=etree.parse(file, parser)
+            root = tree.getroot()
+
+            # Step 3: Find the specific element using an XPath expression
+            NuQA_Global = root.find('.//NuQA_Global')
+            if NuQA_Global is not None:
+                model_dir = Path(NuQA_Global.get('model_basedir'))
+                # from model_dir get the path after 'qa' folder
+                try:
+                    # find the index of 'qa' in the parts
+                    qa_index = model_dir.parts.index("qa")
+                    # get the relative path from 'qa'
+                    model_dir = Path(*model_dir.parts[qa_index + 1:])                    
+                except Exception as e:
+                    print_error(f"Could not find 'qa' in the model_basedir path: {model_dir}. Error: {e}")
+                    ret_value["status"] = "error"
+                    ret_value["message"] = f"Could not find 'qa' in the model_basedir path: {model_dir}. Error: {e}"
+                    return ret_value
+            # loop through all NuQA_Model tags
+            for NuQA_Model in root.findall('NuQA_Model'):
+                if xml_filename in NuQA_Model.get('model_file'):
+                    model_path = model_dir / Path(NuQA_Model.get('model_file'))
+                    ret_value["model_path"] = model_path
+                    ret_value["status"] = "success"
+                    ret_value["message"] = f"Found model path: {model_path}"
+                    return ret_value
+        ret_value["status"] = "error"
+        ret_value["message"] = f"Could not find model for XML filename '{xml_filename}' in any command file."
+        return ret_value
+    except Exception as e:
+        ret_value["status"] = "error"
+        ret_value["message"] = f"An unexpected error occurred: {e}"
+        print_error(f"An unexpected error occurred: {e}")
+        return ret_value
+
+import subprocess
+from typing import Dict
+import os
+import shutil
+import json
+from pathlib import Path
+from lxml import etree
+from typing import Dict
+from pathlib import Path
 
 def update_h_max_preserving_format(xml_file_path: str, new_h_max_value: float, output_file_path: str) -> Dict:
     """
@@ -138,30 +202,34 @@ from pathlib import Path
 from lxml import etree
 from typing import Dict
 from pathlib import Path
+import re, subprocess
 
 BASELINE_FILE = "baseline_results.json"
                 
-def analyze_simulation_results(xml_filename: str, h_max: float, mode: str, session_work_dir: str) -> Dict:
+def analyze_simulation_results(xml_filename: str, h_max: float, mode: str) -> Dict:
     """
     Runs a MotionSolve simulation and analyzes the results. It manages file structures internally.
     
     Args:
         xml_filename (str): The NAME of the XML file (e.g., 'model.xml').
         h_max (float): The timestep to use for the simulation.
-        mode (str): The analysis mode. Must be 'PRE' or 'NORM'.
-        session_work_dir (str): The absolute path to the session's working directory.
+        mode (str): The analysis mode. Must be 'PRE' or 'NORM'.        
     """
+    session_work_dir = "C:\\Users\\anantk\\Downloads"  # hardcoded for now, replace with actual session directory path
     # return dict with status, mode, current_value, percentage_difference
     ret_value = {"status": "success", "mode": mode, "percentage_difference": 100.0, "message": ""}
 
     # --- Step 1: Validate inputs and find the source file ---
     base_path = Path(session_work_dir)
-    zipfile_path = base_path / "qa.zip"
+    #zipfile_path = base_path / "qa.zip"
     # unzip if not already done
-    if zipfile_path.exists() and not (base_path / "qa").exists():
-        shutil.unpack_archive(zipfile_path, base_path)
+    #if zipfile_path.exists() and not (base_path / "qa").exists():
+    #    shutil.unpack_archive(zipfile_path, base_path)
     qa_folder = base_path / "qa"
-    xml_file_path = qa_folder / "depot_msauto" / "ma" / "tire_road_contact" / "c11x001m" / xml_filename
+    model_info = get_model_from_xml(xml_filename, qa_folder)
+    if model_info["status"] == "error":
+        return model_info
+    xml_file_path = qa_folder / model_info["model_path"]
     if not xml_file_path.exists():
         print_error(f"File '{xml_file_path}' not found in session directory.")        
         ret_value["status"] = "error"
@@ -266,17 +334,24 @@ def analyze_simulation_results(xml_filename: str, h_max: float, mode: str, sessi
             "percentage_difference": 100.0
         }
 
+        
 # write test case for analyze_simulation_results
 if __name__ == "__main__":
     # test update_h_max_preserving_format
     test_xml_name = "c11x001m.xml"
     session_dir = "C:\\Users\\anantk\\Downloads"
-    """
     h_max = 0.002
     mode="PRE"
-    analyze_simulation_results(test_xml_name, h_max, mode, session_dir)
+    analyze_simulation_results(test_xml_name, h_max, mode)
     """
+    
     mode="NORM"
     h_max = 0.0015
     analyze_simulation_results(test_xml_name, h_max, mode, session_dir)
-    
+    """
+    #get_model_from_xml(test_xml_name, Path(session_dir) / "qa")
+
+from typing import Dict
+def additional_function(a: int, b: int) -> Dict:
+    """A simple function to add two integers."""
+    return {"status": "success", "result": a + b}
