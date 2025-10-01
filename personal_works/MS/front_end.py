@@ -24,7 +24,7 @@ from code_execution_agent import create_code_executor, validate_user_function, r
 import global_vars
 from session_state import OnboardingState, SESSION_STATE, reset_session
 from tool_input_parser import RobustTool
-from llm_call_back import VerboseToUIHandler
+from llm_call_back import StreamingVerboseToUIHandler 
 # Initialize the first session on startup
 reset_session()
 
@@ -65,6 +65,7 @@ class HierarchicalAgentSystem:
             log_callback.add_log_entry(f"> [Orchestrator] Specialist Agent finished.")
         return self._parse_specialist_output(specialist_result['output'])
 
+    
     def register_tool_for_orchestrator(self, function_code: str):
         print(f"\n--- Attempting to register new Orchestrator tool ---")
         is_valid, message, tree = validate_user_function(function_code)
@@ -119,9 +120,10 @@ class HierarchicalAgentSystem:
         return "✅ Orchestrator Agent created successfully. You can now give it a goal."
 
 
-    def run_orchestrator(self, goal: str, uploaded_file_paths: List[str] = None):
+    async def run_orchestrator(self, goal: str, uploaded_file_paths: List[str] = None):
         if not self.orchestrator_agent_executor:
-            return "❌ Orchestrator has not been created yet.", "No logs available."
+            yield "❌ Orchestrator has not been created yet.", "No logs available."
+            return
             
         if uploaded_file_paths:
             filenames = [os.path.basename(p) for p in uploaded_file_paths]
@@ -133,19 +135,43 @@ class HierarchicalAgentSystem:
                      "You must pass the name of the primary input file to the appropriate tool argument.")
             
         print(f"\n--- EXECUTING ORCHESTRATOR with GOAL: {goal} ---")
-        log_callback = VerboseToUIHandler()
+        log_queue = asyncio.Queue()
+        log_callback = StreamingVerboseToUIHandler(log_queue)
         self.current_callbacks = [log_callback]
-        try:
-            result = self.orchestrator_agent_executor.invoke({"input": goal},
-                                                             config={"callbacks": self.current_callbacks})
-        finally:
-            self.current_callbacks = None
-        verbose_logs = log_callback.get_logs()
+
+        final_output = "Agent run did not produce a final output."
+        full_log_history = []
+
+        # Run the agent in a background task so we can listen to the queue simultaneously
+        async def agent_task():
+            nonlocal final_output
+            async for chunk in self.orchestrator_agent_executor.astream(
+                                                                    {"input": goal},
+                                                                    config={"callbacks": self.current_callbacks}
+                                                                ):
+                if 'output' in chunk:
+                    final_output = chunk['output']
+            
+            # Signal that the agent is done by putting a sentinel value in the queue
+            await log_queue.put(None)
+
+        task = asyncio.create_task(agent_task())
+
+        while True:
+            log_item = await log_queue.get()
+            if log_item is None:
+                # Sentinel value received, agent is finished
+                break
+            
+            full_log_history.append(log_item)
+            # Yield the accumulated log history for the UI
+            yield final_output, f"```log\n{''.join(full_log_history)}\n```"
+
+        await task # Ensure the agent task is complete
+        self.current_callbacks = None
         
-        final_output = result.get('output', "Completed with no output.")
-        
-        # 4. Return both the final output and the logs
-        return final_output, verbose_logs
+        # Yield the final, complete state
+        yield final_output, f"```log\n{''.join(full_log_history)}\n```"
 
 
 # --- System Singleton & UI Logic (with updated file handling) ---
@@ -171,15 +197,16 @@ def process_uploaded_file(file_objs: List[Any]) -> List[str]:
         saved_file_paths.append(file_path)
     return saved_file_paths
 
-def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tuple[str, Any]:
+async def chat_responder(message: str, history: list, uploaded_files: List[str]):
     state = SESSION_STATE["state"]
     response = None
-    logs = " "
+    logs = "No log available."
     if state == OnboardingState.AGENT_READY:
         # The file is processed inside user_interaction before this is called
-        response, logs = agent_system.run_orchestrator(message, uploaded_files) # uploaded_files is the path now
-        logs = f"```log\n{logs}\n```"
-        # return response, formatted_logs
+        # Instead of getting a final response, we iterate over the stream
+        async for response, logs in agent_system.run_orchestrator(message, uploaded_files):
+            logs = f"```log\n{logs}\n```"
+            yield response, logs
 
     if state == OnboardingState.START:
         SESSION_STATE["state"] = OnboardingState.AWAITING_INSTRUCTIONS
@@ -230,7 +257,7 @@ def chat_responder(message: str, history: list, uploaded_files: List[str]) -> Tu
             response = f"{tool_response}\n\nPlease provide the next function, or type `/done` when you have added all necessary functions."
     if not response:
         response = "An unknown error occurred with the conversation state."
-    return response, logs
+    yield response, logs
 
 with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator") as demo:
     gr.Markdown("# Dynamic Agent Orchestrator\n A conversational interface to build and command specialized AI agents.")
@@ -246,15 +273,19 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator") as de
             scale=1)
     clear_button = gr.Button("Clear Conversation & Start New Session")
 
-    def user_interaction(user_message, chat_history, uploaded_file):
+    async def user_interaction(user_message, chat_history, uploaded_file):
         # Process file first, get its permanent path in the session directory
         file_path_on_server = process_uploaded_file(uploaded_file)
-        
+        chat_history.append((user_message, ""))
+        bot_message = ""
+        log_output = ""
+        final_bot_message = None
         # Get the response from our stateful chat function, passing the path
-        bot_message, verbose_logs = chat_responder(user_message, chat_history, file_path_on_server)
-
-        chat_history.append((user_message, bot_message))
-        return "", chat_history, verbose_logs, None # Clear inputs
+        async for partial_bot_message, partial_logs in chat_responder(user_message, chat_history, file_path_on_server):
+            bot_message = partial_bot_message
+            verbose_logs = partial_logs
+            chat_history[-1] = (user_message, bot_message)
+            yield "", chat_history, verbose_logs, None
 
     msg_textbox.submit(user_interaction,
                        [msg_textbox, chatbot, file_uploader],
