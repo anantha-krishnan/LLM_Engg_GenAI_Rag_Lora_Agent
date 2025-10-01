@@ -42,7 +42,7 @@ async def execute_job(function_code, kwargs, job):
 async def connect_and_work():
     """Connects to the server, registers as an executor, and waits for jobs."""
     # Use localhost if running on the same machine
-    uri = "ws://localhost:8765/register_executor"
+    uri = "ws://10.75.32.62:8765/register_executor"
     
     while True:
         try:

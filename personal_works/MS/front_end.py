@@ -302,7 +302,7 @@ if __name__ == "__main__":
     print("="*50)
     print("🚀 Your agent application is ready!")
     print("1. Run the websocket bridge in another terminal: python 2_websocket_bridge.py")
-    print("2. Run this app with uvicorn: uvicorn front_end:app --reload")
+    print("2. Run this app with uvicorn: uvicorn front_end:app --reload --host 0.0.0.0 --port 8000")
     print("3. Open your browser to http://127.0.0.1:8000")
     print("="*50)
 
