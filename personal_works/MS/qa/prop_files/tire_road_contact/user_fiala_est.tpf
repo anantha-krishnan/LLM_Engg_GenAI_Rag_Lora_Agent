@@ -1,0 +1,60 @@
+$----------------------------------------------------------------units
+[UNITS]
+LENGTH                    ='meter'
+FORCE                     ='newton'
+ANGLE                     ='radians'
+MASS                      ='kg'
+TIME                      ='second'
+
+$--------------------------------------------------------------------------model
+[MODEL]
+PROPERTY_FILE_FORMAT      = 'USER'
+FUNCTION_NAME             = 'mbdtire::USER_FIALA'
+USE_MODE                  = 1
+CONTACT_MODEL             = '3D_ENVELOPING'
+
+$-----------------------------------------------------------dimensions
+[DIMENSION]
+UNLOADED_RADIUS           = 0.3135          $Free tyre radius         
+WIDTH                     = 0.205           $Nominal section width of the tyre         
+! RIM_RADIUS              = 0.1905          $Nominal rim radius
+! RIM_WIDTH               = 0.152           $Rim width         
+ASPECT_RATIO              = 0.6             $Nominal aspect ratio
+
+$----------------------------------------------------------------------parameter
+[PARAMETER]
+VERTICAL_STIFFNESS        = 209651.8        $Vertical Stiffness [force/length]
+
+$LONGITUDINAL_STIFFNESS   = 358066.3        $Tyre overall longitudinal stiffness
+$LATERAL_STIFFNESS        = 102673.5        $Tyre overall lateral stiffness
+$YAW_STIFFNESS            = 4795            $Tyre overall yaw stiffness
+
+VERTICAL_DAMPING          = 50              $Vertical Damping [force * time / length]
+ROLLING_RESISTANCE        = 0.0023           $Rolling Resistance Moment Coefficient [length]
+CSLIP                     = 86748           $Logitudinal Slip Stiffness [force]; 
+CALPHA                    = 61296           $Cornering Stiffness [force / angle]
+CGAMMA                    = 3594            $Camber Stiffness [force / angle]
+MGAMMA                    = 0.15           $Camber Angle after which camber thrust starts reducing
+CSPIN                     = 150	        $Camber stiffness for twist torque [force*length / angle] 
+UMAX                      = 1.04             $Static Friction Coefficient
+UMIN                      = 0.878           $Sliding Friction Coefficient
+RLENX                     = 0.242           $Relaxation Length in x direction
+RLENY                     = 0.597           $Relaxation Length in y direction
+ROLLING_RADIUS_FACTOR     = 0.58             $ Rolling radius  =  loaded radius + ROLLING_RADIUS_FACTOR *(unloaded radius - loaded radius)
+LOW_SPEED_THRESHOLD       = 1           $ The speed at which artificial damping start to act
+DAMP_X                    = 300          $numerical dampening in x when tire deformation in x  goes out of bounds
+DAMP_Y                    = 200          $numerical dampening in x when tire deformation in y goes out of bounds
+$--------------------------------------------------------contact_patch
+[CONTACT_COEFFICIENTS]
+PA1                     = 0.671           $Square root term in contact length equation
+PA2                     = 0.733           $Linear term in contact length equation
+PB1                     = 1.059           $Root term in contact width equation
+PB2                     = -1.1878         $Linear term in contact width equation
+PLS                     = 0.8335          $Scaling of distance between front and rear ellipsoid
+PAE                     = 0.4612          $Semi major axis of ellipsoid
+PBE                     = 0.302           $Semi minor axis of ellipsoid 
+PCE                     = 1.5174          $Order of ellipsoid 
+ROAD_INCREMENT          = 0.001           $distance between contact points
+N_WIDTH                 = 4               $Number of parallel ellipsoids  
+N_LENGTH                = 4               $Number of ellipsoids at sides of contact patch 
+!Mesh_Height             = 0.028			$Height of end points of ellipse mesh; should be greater than the obstacle height

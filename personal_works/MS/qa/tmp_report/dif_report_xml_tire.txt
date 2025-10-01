@@ -1,0 +1,26 @@
+DIF REPORT GENERATED ON  1-OCT-2025 11:29:30
+
+   ID  DFLAG     DIF_RESULT  LABEL
+==========================================================
+  491      9    1.3593807    [c11x001m.xml] -> REQSUB -> REQ/70000006 AutoTire - LonSlip LatSlip IncAngle (W-Axis system) -> RESULT(2)
+  491      9    16.535049    [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(2)
+  491      9    4.4802146    [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(3)
+  491      9    0.14036715   [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(4)
+  491      9    203.87187    [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(6)
+  491      9    0.1403672    [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(7)
+  491      9    232.81326    [c11x001m.xml] -> REQSUB -> REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -> RESULT(8)
+  491      9    16.535049    [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(2)
+  491      9    4.4802146    [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(3)
+  491      9    0.14036715   [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(4)
+  491      9    203.87187    [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(6)
+  491      9    0.1403672    [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(7)
+  491      9    232.81326    [c11x001m.xml] -> REQSUB -> REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -> RESULT(8)
+  491      9    1.3593807    [c11x001m.xml] -> REQSUB -> REQ/70000009 AutoTire - LonSlip LatSlip IncAngle (SAE-Axis system) -> RESULT(2)
+  491      9    16.535049    [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(2)
+  491      9    4.0807576    [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(3)
+  491      9    0.11297248   [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(4)
+  491      9    4.2344513    [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(6)
+  491      9    33.916134    [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(7)
+  491      9    232.6893     [c11x001m.xml] -> REQSUB -> REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -> RESULT(8)
+  491      9    0.13796623   [c11x001m.xml] -> REQSUB -> REQ/70000011 AutoTire - Contact Patch Locations -> RESULT(6)
+  491      9    17.429733    [c11x001m.xml] -> REQSUB -> REQ/70000011 AutoTire - Contact Patch Locations -> RESULT(7)

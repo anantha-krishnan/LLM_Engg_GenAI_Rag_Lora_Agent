@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="qachk_html_gen.xsl"?>
+<NuQA_CheckReport generated  =" 1-OCT-2025 11:29:30"
+                  dif_report ="dif_report_xml_tire.xml">
+ <NuQA_Check
+     model_id   = "491"
+     model_name = "c11x001m.xml"
+     model_file = "../qa/depot_msauto/ma/tire_road_contact/c11x001m/c11x001m.xml"
+     log_file   = "../qa/tmp_res_xml/c11x001m.log"
+     ref_file   = "../qa/depot_msauto/ma/tire_road_contact/c11x001m/c11x001m.mrf"
+     res_file   = "../qa/tmp_res_xml/c11x001m.mrf"
+     tolerance  = "1.0000000"
+     chk_val    = "232.8132629"
+     status     = "FAILED"
+     comment    = "Single Wheel, Lateral velocity input, Vx = 20m/s, Vy = 2 m/s, Vz=0 m/s, Wx =0 rad/s, Wy=65.2 rad/s, Wz= 0 rad/s"
+ />
+ <NuQA_CheckStatus
+     num_models  = "490"
+     num_qa_runs = "1"
+     num_success = "1"
+     num_pass    = "0"
+     num_fail    = "1"
+     num_skip    = "489"
+     num_99999   = "0"
+ />
+</NuQA_CheckReport>

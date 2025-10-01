@@ -1,0 +1,118 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="qadif_html_gen.xsl"?>
+<NuQA_DiffReport generated=" 1-OCT-2025 11:29:30">
+ <NuQA_Diff
+     model_id   = "491"
+     model_name = "c11x001m.xml">
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "1.3593807   "
+      diff_label = "REQSUB -&gt; REQ/70000006 AutoTire - LonSlip LatSlip IncAngle (W-Axis system) -&gt; RESULT(2)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "16.535049   "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(2)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "4.4802146   "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(3)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.14036715  "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(4)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "203.87187   "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(6)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.1403672   "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(7)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "232.81326   "
+      diff_label = "REQSUB -&gt; REQ/70000007 AutoTire - Tire CP Forces (W-Axis system) -&gt; RESULT(8)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "16.535049   "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(2)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "4.4802146   "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(3)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.14036715  "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(4)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "203.87187   "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(6)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.1403672   "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(7)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "232.81326   "
+      diff_label = "REQSUB -&gt; REQ/70000008 AutoTire - Tire CP Forces (SAE-Axis system) -&gt; RESULT(8)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "1.3593807   "
+      diff_label = "REQSUB -&gt; REQ/70000009 AutoTire - LonSlip LatSlip IncAngle (SAE-Axis system) -&gt; RESULT(2)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "16.535049   "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(2)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "4.0807576   "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(3)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.11297248  "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(4)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "4.2344513   "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(6)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "33.916134   "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(7)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "232.6893    "
+      diff_label = "REQSUB -&gt; REQ/70000010 AutoTire - Tire Hub Forces (C-Axis System) -&gt; RESULT(8)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "0.13796623  "
+      diff_label = "REQSUB -&gt; REQ/70000011 AutoTire - Contact Patch Locations -&gt; RESULT(6)"
+  />
+  <NuQA_DiffObj
+      dflag      = "9"
+      diff       = "17.429733   "
+      diff_label = "REQSUB -&gt; REQ/70000011 AutoTire - Contact Patch Locations -&gt; RESULT(7)"
+  />
+ </NuQA_Diff>
+</NuQA_DiffReport>

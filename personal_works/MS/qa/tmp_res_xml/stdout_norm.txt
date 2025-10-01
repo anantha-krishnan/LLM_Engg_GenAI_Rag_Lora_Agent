@@ -1,0 +1,241 @@
+************************************************************************
+**                                                                    **
+**                                                                    **
+**                    Altair MotionSolve(TM) 2026                     **
+**                                                                    **
+**                Multibody Dynamics Analysis Software                **
+**                   from Altair Engineering, Inc.                    **
+**                                                                    **
+**                                                                    **
+**                Windows 11 - Build: 26100 BLRLAP1356                **
+**       16 CPU: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz       **
+**                         CPU speed 2300 MHz                         **
+**                    42455 MB RAM, 130333 MB swap                    **
+**                    Machine epsilon : 2.2204E-16                    **
+**                                                                    **
+************************************************************************
+**  COPYRIGHT (C) 2002-2025                 Altair Engineering, Inc.  **
+** All Rights Reserved.  Copyright notice does not imply publication. **
+**         Contains trade secrets of Altair Engineering, Inc.         **
+** Decompilation or disassembly of this software strictly prohibited. **
+************************************************************************
+ 
+ Directory   : C:\Altairwin64\11.0\hwsolvers\bin\win64
+ nuadr       : HWVERSION_2026_Sep 15 2025_00:27:43 (H3D 24.0)
+ nuwriter    : HWVERSION_2026_Sep 15 2025_00:32:25 (H3D 24.0)
+ nusolver    : HWVERSION_2026_Sep 15 2025_00:33:53
+ msautoutils : HWVERSION_2026_Sep 15 2025_00:25:59
+ mbdtire     : HWVERSION_2026_Sep 15 2025_00:25:57
+ cdtire      : HWVERSION_2026_Sep 15 2025_00:21:11
+ nuanima     : HWVERSION_2026_Sep 15 2025_00:34:39 (H3D 24.0)
+
+---  1-OCT-2025 11:29:30 ---
+
+INFO: Parsing XML file [..\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml]...
+
+ 
+Checking out license...
+
+ 
+INFO: Model units are MILLIMETER SECOND NEWTON KILOGRAM.
+ Reading  35 markers...
+ Reading   3 rigid bodies...
+ Reading   1 x-arrays...
+ Reading   1 y-arrays...
+ Reading   1 u-arrays...
+ Reading  17 variables...
+ Reading   5 strings...
+ Reading   1 general (user) state eqns (GSE)...
+ Reading   1 fixed joints...
+ Reading gravity vector...
+ Reading   1 action forces...
+ Reading   7 usersub (REQSUB) requests...
+ Reading  14 graphics...
+INFO: Starting SMP run with up to 4 threads.
+INFO: Usersub library [C:\Altairwin64\11.0\hwsolvers\bin\win64\msauto\mbdtire.dll] loaded
+INFO: Usersub library [C:\Altairwin64\11.0\hwsolvers\bin\win64\msauto\msautoutils.dll] loaded
+ FUNCTION_NAME = mbdtire::USER_FIALA; Dll = mbdtire; Func = USER_FIALA
+ Property file format = USER
+ 
+USRMES:USER [305001]
+INFO: continuous version of Fiala Tire.
+ 
+USRMES:USER [30301]
+INFO: left mounted tire detected
+ 
+USRMES:USER [1]
+INFO: TIRE_ROAD_CONTACT: Using an elliptical cam contact model
+ 
+USRMES:USER [1]
+INFO: EllipticalCamContact: Mesh_Height not found in CONTACT_COEFFICIENTS block. Assuming 20% of tire unloaded radius as Mesh_Height. To change this stop the simulation and provide a Mesh_Height value.
+ 
+USRMES:USER [30301]
+INFO: EllipticalCamContact: Multi Threaded  Execution
+ 
+USRMES:USER [30301]
+INFO: Altair 2D Flat Road. 
+The z offset for the flat road is set to 0
+
+ 
+ Resizing X array due to user action in GSE initialization...
+ Resizing Y array due to user action in GSE initialization...
+ Dimension of X array for GSE/305001 was changed from 5 to 4.
+ Dimension of Y array for GSE/305001 was changed from 0 to 6.
+ 
+ Updating states array for GSE/305001:
+INFO: Analysis model processed.
+ 
+ 
+INFO: Total Number of Independent Coordinates = 10 (Kinematic DoF: 6, Other States: 4)
+
+ 
+INFO: Number of Total Entries in Residual Vector: 118
+INFO: Number of Non-zero Entries in Jacobian Mtx: 1496 (10.744% Filled)
+ 
+License OK.
+ Starting static analysis...
+ 
+ STATIC SIMULATION PARAMETERS
+ -----------------------------------------------
+ Convergence Tolerance        : 0.0001
+ Maximum Iterations           : 750
+ Maximum Force Imbalance      : 0.0001
+ Stability                    : 1e-10
+ 
+ 
+    Time        Initial           Final         No. of     Cumulative
+                 error            error       iterations   iterations
+ --------------------------------------------------------------------
+   0.00000     3.88665E+04     4.03588E-12        3            3
+ 
+ AGGREGATE MASS/C.G. PROPERTIES
+ -----------------------------------------------------
+ Total Mass       : 3.700E+01 KILOGRAM
+ CG Before Static : (0.000E+00, 0.000E+00, 2.950E+02) 
+ CG After Static  : (-2.401E-23, 2.347E-11, 3.118E+02) 
+ 
+ 
+ CUMULATIVE COMPUTE TIME INFORMATION
+ ----------------------------------------
+ Preprocessing Model      : 3.853E+00 sec
+ Core Analysis            : 3.220E-01 sec
+ Postprocessing/Messaging : 3.000E-03 sec
+ Total Elapsed Time       : 4.178E+00 sec
+
+ 
+INPUT:
+ [..\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml]
+ 
+OUTPUT:
+ [..\qa\tmp_res_xml\c11x001m.mrf]
+ [..\qa\tmp_res_xml\c11x001m.log]
+ 
+STATICS SIMULATION COMPLETED
+ 
+
+INFO: Starting SMP run with up to 4 threads.
+INFO: Analysis model processed.
+ 
+ 
+INFO: Total Number of Independent Coordinates = 10 (Kinematic DoF: 6, Other States: 4)
+
+ 
+INFO: Number of Total Entries in Residual Vector: 154
+INFO: Number of Non-zero Entries in Jacobian Mtx: 1928 (8.12953% Filled)
+ 
+ 
+ Solving Initial Velocity...
+INFO: Initial velocity solution converged in 2 iterations.
+ 
+ Starting dynamic analysis...
+ 
+   
+ DYNAMIC SIMULATION PARAMETERS
+ ----------------------------------------
+ Start Time                   : 0.000E+00
+ End   Time                   : 5.000E-01
+ Print Interval               : 1.000E+00
+ 
+ Integrator                   : DSTIFF
+ Error Tolerance              : 1.000E-03
+ Maximum Step Size            : 7.000E-03
+ Minimum Step Size            : 1.000E-06
+ DAE Index                    : 3
+ DAE Constraint Tolerance     : 1.000E-05
+ 
+
+ +--+
+ Time=2.183E-07; Order=1; H=2.183E-07 [Max Phi=3.056E-13]
+ Time=5.000E-01; Order=4; H=4.247E-03 [Max Phi=4.082E-12]
+ 
+ DAE SOLVER STATISTICS (DASPK-Index3)
+ ------------------------------------------------
+ Number of solution steps                 = 86
+ Number of residue evaluations            = 119
+ Number of jacobian computations          = 100
+ Number of error test failures            = 0
+ Number of nonlinear convergence failures = 0
+ 
+ 
+ CUMULATIVE COMPUTE TIME INFORMATION
+ ----------------------------------------
+ Preprocessing Model      : 3.859E+00 sec
+ Core Analysis            : 7.390E-01 sec
+ Postprocessing/Messaging : 5.000E-03 sec
+ Total Elapsed Time       : 4.603E+00 sec
+
+ 
+INPUT:
+ [..\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml]
+ 
+OUTPUT:
+ [..\qa\tmp_res_xml\c11x001m.mrf]
+ [..\qa\tmp_res_xml\c11x001m.log]
+ 
+TRANSIENT SIMULATION COMPLETED
+ 
+
+---  1-OCT-2025 11:29:35 ---
+
+
+
+
+** Execute MBD postprocessor **
+HWVERSION_2026_Sep 15 2025_00:34:39
+
+Generating Output for Post Command # 1...
+
+ Model File     : ..\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml
+ Result File    : ..\qa\tmp_res_xml\c11x001m.mrf
+ Animation File : ..\qa\tmp_res_xml\c11x001m.h3d
+
+INFO: 2 of 2 results data will be processed based on H3DOutput definition
+
+
+Writing H3D model...
+
+Writing H3D results...
+
+100 percent completed...
+
+Closing H3D file:
+ [..\qa\tmp_res_xml\c11x001m.h3d]
+
+Writing ABF results...
+
+ Writing 11 requests to abf...
+100 percent completed...
+
+Closing ABF file:
+ [..\qa\tmp_res_xml\c11x001m.abf]
+
+Writing PLT results...
+
+100 percent completed...
+
+Closing PLT file:
+ [..\qa\tmp_res_xml\c11x001m.plt]
+
+
+** Exit MBD postprocessor **
+

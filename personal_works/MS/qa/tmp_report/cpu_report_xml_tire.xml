@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="qacpu_html_gen.xsl"?>
+<NuQA_CPUReport generated=" 1-OCT-2025 11:29:30">
+ <NuQA_CPU
+     model_id   = "491"
+     model_name = "c11x001m.xml"
+     reference  = "1.1730000"
+     result     = "0.7390000"
+     difference = "-36%"
+     comment    = "Single Wheel, Lateral velocity input, Vx = 20m/s, Vy = 2 m/s, Vz=0 m/s, Wx =0 rad/s, Wy=65.2 rad/s, Wz= 0 rad/s"
+ />
+</NuQA_CPUReport>

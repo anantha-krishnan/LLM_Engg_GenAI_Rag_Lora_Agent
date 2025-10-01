@@ -1,0 +1,46 @@
+DEBUG: Updating h_max in 'C:\Users\anantk\Downloads\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml' to 0.002 (format preserving)...
+DEBUG: Successfully updated h_max in 'C:\Users\anantk\Downloads\qa\depot_msauto\ma\tire_road_contact\c11x001m\c11x001m.xml' (format preserved).
+DEBUG: Old value: 0.0015
+DEBUG: New value: 0.002
+DEBUG: Running MotionSolve simulation in mode 'PRE' with h_max=0.002...
+DEBUG: MotionSolve simulation finished successfully 0. STDOUT: Setting DLL...
+"Setting up for C:\Altairwin64\11.0\hwsolvers\bin\win64"
+Setting Radflex path...
+******************************************************************************
+**                                                                          **
+**                    Altair MBD solver QA program                          **
+**                                                                          **
+******************************************************************************
+** Time of Build 00:33:34
+** Date of Build Sep 15 2025
+******************************************************************************
+Reading XML file [qa_cmd\qa_depot_xml_tire.xml] ... 
+490 QA models processed.
+
+*** Number of models to be run : 1 ***
+Matlab and Simulink related models will be excluded from the qa run
+*** Exclude Group # 1 : s ***
+
+*** Number of models to be run after excluding group s : 1 ***
+*** Exclude Group # 1 : w ***
+
+*** Number of models to be run after excluding group w : 1 ***
+ 
+QA Pre run to refresh the QA reference file: 
+
+Doing run 1 of 1...
+
+Generating QA pre files for : ../qa/depot_msauto/ma/tire_road_contact/c11x001m/c11x001m.xml
+
+*************************************************
+Total Number of QA models           : 490
+Total Number of QA pre requested    : 1
+Total Number of successful pre runs : 1
+Number of models skipped            : 489
+*************************************************
+
+
+QA Elapsed Time : 8.233
+
+ STDERR: 
+
