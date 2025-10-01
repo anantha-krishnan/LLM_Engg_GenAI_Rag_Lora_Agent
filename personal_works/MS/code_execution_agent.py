@@ -112,7 +112,7 @@ def run_user_function_via_websocket(json_input: str) -> str:
     
     # --- WebSocket Communication ---
     async def _run_job_async():
-        uri = "ws://localhost:8765/run_job"
+        uri = "ws://10.75.32.62:8765/run_job"
         payload = {"function_code": function_info["code"], "kwargs": kwargs, "helper_functions": [hf["code"] for hf in HELPER_FUNCTIONS.values()]}
         try:
             async with websockets.connect(uri) as websocket:

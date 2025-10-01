@@ -86,7 +86,7 @@ async def main_handler(websocket):
 
 async def start_server():
     """The main function that starts the WebSocket server."""
-    host = "localhost" # Use localhost for local testing
+    host = "0.0.0.0" # Use localhost for local testing
     port = 8765
     logger.info(f"Starting WebSocket server on ws://{host}:{port}")
     async with websockets.serve(main_handler, host, port):
