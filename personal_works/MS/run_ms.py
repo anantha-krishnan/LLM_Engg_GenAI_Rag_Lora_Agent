@@ -352,6 +352,3 @@ if __name__ == "__main__":
     #get_model_from_xml(test_xml_name, Path(session_dir) / "qa")
 
 from typing import Dict
-def additional_function(a: int, b: int) -> Dict:
-    """A simple function to add two integers."""
-    return {"status": "success", "result": a + b}
