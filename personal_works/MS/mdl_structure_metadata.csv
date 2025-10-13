@@ -16,12 +16,12 @@ driveshaft1.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Lib
 transfer1.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Driveline\Transfer,Driveline,,Transfer Case,
 transfer2.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Driveline\Transfer,Driveline,,Transfer Case,
 transfer_case_ctr_diff.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Driveline\Transfer,Driveline,,Transfer Case,
-Sedan_1.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\FullCar,ExampleModel,,Car,Full Car
-Pickup_Truck.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\PickupTruck,ExampleModel,,Truck,Pick up truck
-Auto_Rickshaw.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\ThreeWheeler,ExampleModel,,Three wheeler,Auto Rickshaw
-track.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\TrackLibrary,ExampleModel,,Tracked vehicle,Simple track
-Tracked_APC.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\TrackLibrary\Tracked_APC,ExampleModel,,Tracked vehicle,Tank
-UTV_4x4.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\UTV,ExampleModel,,utv,
+Sedan_1.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\FullCar,Example Model,,Car,Full Car
+Pickup_Truck.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\PickupTruck,Example Model,,Truck,Pick up truck
+Auto_Rickshaw.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\ThreeWheeler,Example Model,,Three wheeler,Auto Rickshaw
+track.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\TrackLibrary,Example Model,,Tracked vehicle,Simple track
+Tracked_APC.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\TrackLibrary\Tracked_APC,Example Model,,Tracked vehicle,Tank
+UTV_4x4.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Examples\UTV,Example Model,,utv,utv
 autobumpstop_ext_front.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Frnt_bumpers\Jnc_ext1,Bumper,Front,Jounce,external
 jounce_bumper.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Frnt_bumpers\Jnc_ext1,Bumper,Front,Jounce,external
 autobumpstop_int_front.mdl,C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models\Frnt_bumpers\Jnc_int1,Bumper,Front,Jounce,internal
