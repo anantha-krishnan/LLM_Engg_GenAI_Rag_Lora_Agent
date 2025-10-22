@@ -12,8 +12,11 @@ from langchain.docstore.document import Document
 
 # --- CONFIGURATION ---
 MDL_LIBRARY_PATH = "C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs"
-CSV_METADATA_PATH = "mdl_structure_metadata.csv"
-DB_DIR = "./chroma_db_mdl"
+# get current file path
+CURRENT_FILE_PATH = Path(__file__).resolve().parent
+
+CSV_METADATA_PATH = (CURRENT_FILE_PATH/"mdl_structure_metadata.csv").as_posix()
+DB_DIR = (CURRENT_FILE_PATH/"chroma_db_mdl").as_posix()
 
 import global_vars
 
@@ -89,7 +92,7 @@ def build_mdl_vector_store(force_rebuild: bool = False):
     print(f"Scanning for .mdl files in {MDL_LIBRARY_PATH}...")
     for root, _, files in os.walk(MDL_LIBRARY_PATH):
         for file in files:
-            if file.endswith(".mdl"):
+            if file.endswith(".mdl"):                
                 full_path = Path(root) / file
                 # CRITICAL: Normalize path for matching
                 normalized_path = str(full_path.as_posix()).lower()
@@ -148,4 +151,4 @@ def build_mdl_vector_store(force_rebuild: bool = False):
     print("--- Vector store build complete! ---")
 
 if __name__ == "__main__":
-    build_mdl_vector_store(force_rebuild=True)
+    build_mdl_vector_store()

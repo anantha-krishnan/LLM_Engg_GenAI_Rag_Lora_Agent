@@ -32,7 +32,7 @@ def add_user_message(message, chat_history):
 def build_manual_ui():
     """Builds and launches the Gradio chat interface manually."""
     with gr.Blocks(theme=gr.themes.Glass(), title="MDL Modeling Assistant") as demo:
-        gr.Markdown("# Vehicle Dynamics Modeling Assistant")
+        gr.Markdown("# MotionView Vehicle Modeling Assistant")
         gr.Markdown("Ask questions to find components in the MDL library.")
         
         chatbot = gr.Chatbot([],
@@ -43,19 +43,19 @@ def build_manual_ui():
         )
         with gr.Row():
             msg = gr.Textbox(placeholder="e.g., What types of suspensions are available?", container=False, scale=7)
-        with gr.Row():            
-            clear_button = gr.Button("Clear Conversation & Start New Session")
+        #with gr.Row():            
+        #    clear_button = gr.Button("Clear Conversation & Start New Session")
         
         msg.submit(add_user_message, [msg, chatbot], [chatbot], queue=False).then(
             respond, [msg, chatbot], [chatbot]
         )
-        clear_button.click(lambda: None, None, chatbot, queue=False)
+        #clear_button.click(lambda: None, None, chatbot, queue=False)
     demo.launch()
 
 def build_ui():
     """Builds and launches the Gradio chat interface."""
     with gr.Blocks(theme=gr.themes.Glass(), title="MDL Modeling Assistant") as demo:
-        gr.Markdown("# Vehicle Dynamics Modeling Assistant")
+        gr.Markdown("# MotionView Vehicle Modeling Assistant")
         gr.Markdown("Ask questions to find components in the MDL library.")
         
         chatbot = gr.ChatInterface(
@@ -70,9 +70,9 @@ def build_ui():
                 "Show me all the example models"
             ],
         )
-        with gr.Row():
-            clear_button = gr.Button("Clear Conversation & Start New Session")
-        clear_button.click(None, None, [chatbot], queue=False)
+        #with gr.Row():
+        #    clear_button = gr.Button("Clear Conversation & Start New Session")
+        #clear_button.click(None, None, [chatbot], queue=False)
     demo.launch()
 
 if __name__ == "__main__":

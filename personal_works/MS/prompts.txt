@@ -1,0 +1,29 @@
+i want to create a full vehicle model. tell me how to proceed
+
+lets start with front suspensions
+
+show me the front Macpherson Suspensions alone
+
+tell me how to choose between them given that it is needed for a pick up truck running on mountainous regions
+
+can you give me some mathematical insights about the pros and cons
+
+use full file path while listing
+
+i choose the 2 Piece Macpherson Suspension
+
+lets proceed with steering
+
+list them separately so that i can choose one of them
+
+i choose option 5
+
+i want to edit one of my selections
+
+i want to edit C:/Altair_Installs/2026_0_10_release/hwdesktop/hw/mdl/mdllib/Libs/Models/Frnt_susp/Macpherson/2_pc_lca/macfrnt.mdl
+
+lets tune the mass and inertia
+
+is 20 kg mass sufficient for the wheel of a pick up truck. what should i do? how do i decide what to do
+make it 25
+increate the inertias by 20%

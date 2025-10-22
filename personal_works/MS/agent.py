@@ -17,10 +17,12 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 import global_vars
 
 # --- AGENT SETUP ---
-DB_DIR = "./chroma_db_mdl"
+DB_DIR = (Path(__file__).parent / "chroma_db_mdl").as_posix()
 LLM_MODEL = global_vars.model_openai_4omini
 SELECTION_KEYWORDS = ["select", "choose", "pick", "option", "go with", "take", "i want", "i'll have"]
 COMPONENTS_SELECTED = [{"full_file_path": "", "system_def_name": ""}]
+EDIT_KEYWORDS = ["adjust", "modify", "change", "edit", "optimize", "tune"]
+EXIT_EDIT_KEYWORDS = ["done editing", "exit edit mode", "finish editing", "stop editing", "back to finding", "go back to finding"]
 
 class ComponentSelection(BaseModel):
     """
@@ -31,6 +33,10 @@ class ComponentSelection(BaseModel):
 
 class MdlAgent:
     def __init__(self):
+        # enum all available conversation modes
+        self.conversation_modes = {"FINDING": "FindingMode", "EDITING": "EditingMode"}
+        self.conversation_mode = self.conversation_modes["FINDING"] # default mode
+        self.active_component_context={"content":""}
         if not os.path.exists(DB_DIR):
             raise FileNotFoundError(
                 f"Vector store not found at {DB_DIR}. "
@@ -74,6 +80,7 @@ class MdlAgent:
         self.extraction_llm = ChatOpenAI(model=LLM_MODEL, temperature=0)
         self.extraction_chain = self._create_extraction_chain()
         self.chain = self._create_rag_chain()
+        self.editor_chain = self._create_editor_chain()
     def open_motion_view(self):
         """
         Function to load the selected component into MotionView.
@@ -88,7 +95,7 @@ class MdlAgent:
             f.write("from pathlib import Path\n\n")
             for comp in COMPONENTS_SELECTED:
                 if comp["full_file_path"] and comp["system_def_name"]:
-                    f.write(f'mview.System (definition_file = "{str(comp["full_file_path"])}",  definition_name = "{comp["system_def_name"]}")\n')
+                    f.write(f'mview.System (definition_file = "{str(comp["full_file_path"])}", name="{Path(comp["full_file_path"]).stem}",  definition_name = "{comp["system_def_name"]}")\n')
                     
         # start a cmd command using subprocess to open MotionView with the selected components in the command line
         subprocess.Popen([
@@ -99,6 +106,30 @@ class MdlAgent:
             "-clientconfig", "hwmbdmodel.dat",
             "-python", "D:/PaperWork/personal/AI/LLM_Engg_GenAI_Rag_Lora_Agent/personal_works/MS/open_mv_model.py"
         ])
+    def _add_selected_component(self, extracted_data: dict):
+        if extracted_data and extracted_data.get("full_file_path"):
+            file_path = extracted_data.get("full_file_path", "N/A")
+            sys_def = extracted_data.get("system_def_name", "N/A")
+            COMPONENTS_SELECTED.append({
+                "full_file_path": Path(file_path).as_posix(),
+                "system_def_name": sys_def
+            })
+            print(f"[INFO] Extracted selection - full_file_path: {file_path}, SystemDefName: {sys_def}")
+            return f"Confirmed: Added '{file_path}' to your selections. What would you like to find next?"
+        else:
+            print("[INFO] Extraction chain did not find a valid selection.")
+            return None
+    def _read_mdl_file_content(self, file_path: str) -> str:
+        """Helper function to read the content of an MDL file."""
+        try:
+            with open(file_path, 'r') as f:
+                return f.read()
+        except FileNotFoundError:
+            print(f"[ERROR] File not found: {file_path}")
+            return "Error: Could not read the file."
+        except Exception as e:
+            print(f"[ERROR] Error reading file {file_path}: {e}")
+            return f"Error: An unexpected error occurred while reading the file: {e}"
     def _handle_potential_selection(self, user_input: str, chat_history: list):
         """
         Uses the extraction chain to identify if the user is making a selection.
@@ -115,31 +146,8 @@ class MdlAgent:
                 "chat_history": chat_history,
                 "user_input": user_input
             })
-
             if extracted_data and extracted_data.get("full_file_path"):
-                file_path = extracted_data.get("full_file_path", "N/A")
-                sys_def = extracted_data.get("system_def_name", "N/A")
-                COMPONENTS_SELECTED.append({
-                    "full_file_path": Path(file_path).as_posix(),
-                    "system_def_name": sys_def
-                })
-                print(f"[INFO] Extracted selection - full_file_path: {file_path}, SystemDefName: {sys_def}")
-                return f"Confirmed: Added '{file_path}' to your selections. What would you like to find next?"
-                # Find the full Document object from our last retrieval
-                # This is crucial for accessing all metadata for the callback
-                selected_doc = None
-                for doc in self.last_retrieved_docs:
-                    if doc.metadata.get("file_path") == file_path:
-                        selected_doc = doc
-                        break
-                
-                if selected_doc:
-                    self.on_component_selected(selected_doc)
-                    return f"Confirmed: Added '{file_path}' to your selections. What would you like to find next?"
-                else:
-                    # This can happen if the user tries to select from an old message
-                    return "It seems you're trying to select a component from a previous search. Please ask for the list again before making a selection."
-                
+                return extracted_data
             else:
                 print("[INFO] Extraction chain did not find a valid selection.")
                 return None # No valid selection found, proceed to RAG
@@ -172,6 +180,40 @@ class MdlAgent:
             )
             formatted_docs.append(doc_str)
         return "\n\n".join(formatted_docs)
+    
+    def _create_editor_chain(self):
+        """Creates a chain specifically for understanding and modifying MDL file content."""
+        
+        editor_system_prompt = """
+        You are an expert CAE assistant for Altair MotionView, specializing in editing component parameters defined in MDL files.
+        Your task is to help a user understand and modify a specific entity within the provided MDL file content.
+
+        Here is your workflow:
+        1.  **Analyze the Request:** Based on the user's request, identify the specific entity they want to modify (e.g., "shock damper", "front bushing", "rod mass").
+        2.  **Locate the Definition:** Scan the provided "MDL File Content" to find the corresponding definition block. For example, a "shock damper" is likely defined by a `*SetCoilSpring` statement, and a body's mass by `*SetBody`.
+        3.  **Extract and Explain:**
+            - Extract the current parameter values from the relevant line. For `*SetCoilSpring(dmp, LEFT, K, C, Fo, Lo)`, you would extract K (stiffness) and C (damping).
+            - In simple terms, explain what these parameters mean in a physical context. For example: "The current stiffness (K) is ... A higher value makes the suspension stiffer. The current damping (C) is ... A higher value makes the shock settle faster after a bump."
+        4.  **Guide the User:** Ask the user what changes they'd like to make. Offer suggestions like, "Would you like to make it softer or stiffer? Faster or slower damping?"
+        5.  **Generate the New Statement:** Once the user provides the new values, generate the **complete and exact** `*Set...` statement with the updated values, preserving the original format. For example: `*SetCoilSpring(dmp,     LEFT,           10,          1,           0,         0)`.
+        
+        **Important Rules:**
+        - ALWAYS base your analysis on the provided "MDL File Content".
+        - If the user asks to modify something you can't find, inform them clearly.
+        - Be conversational and helpful.
+        **Formatting Rule**:
+        - When you include mathematical equations or formulas, you MUST enclose them in standard LaTeX delimiters. Use `$$...$$` for equations on their own line (display mode) and `$...$` for equations within a line of text (inline mode).
+        """
+        
+        editor_prompt = ChatPromptTemplate.from_messages([
+            ("system", editor_system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            # providing the file content directly in the context
+            ("user", "My request is: '{user_request}'\n\n--- MDL File Content ---\n{mdl_content}")
+        ])
+        
+        # use a standard LLM
+        return editor_prompt | self.llm | StrOutputParser()
 
     def _create_rag_chain(self):
         """
@@ -202,11 +244,16 @@ class MdlAgent:
             - If the user asks a specific question (e.g., "find a macpherson strut"), list the specific components that match from the context.
             - If the context is empty, state that you could not find any matching components and suggest they broaden their search.
             - If the user asks a follow-up question, use the conversation history and the new context to provide a relevant answer.
+            - You must have the full_file_path and system_def_name for each component listed.
+            - Try to provide a summary of the components and a helpful idea to choose one of them and proceed.
 
         2.  **As a Concept Explainer**: If the user asks for an explanation of a technical term or concept (e.g., "what is a macpherson strut?", "explain rack and pinion steering"), you are free to use your general knowledge.
             - Provide a clear, helpful, and concise explanation of the concept.
             - You can do this before or after listing components from the CONTEXT if the user's query is mixed. For example, if they ask "show me macpherson struts and explain what they are".
             - You can also use the context to see if any components match the concept being explained, but your explanation should not rely solely on the context.
+        
+        **Formatting Rule**:
+            - When you include mathematical equations or formulas, you MUST enclose them in standard LaTeX delimiters. Use `$$...$$` for equations on their own line (display mode) and `$...$` for equations within a line of text (inline mode).
 
         Always be helpful and differentiate between information from the library (CONTEXT) and your general knowledge.
         """
@@ -263,27 +310,77 @@ class MdlAgent:
         ])
         final_extraction_prompt = extraction_prompt.partial(format_instructions=parser.get_format_instructions())
         return final_extraction_prompt | self.extraction_llm | JsonOutputParser()
-    
+    def _set_up_editing_mode(self, user_input: str, chat_history: list):
+        component_to_edit = self._handle_potential_selection(user_input, chat_history)
+        if not component_to_edit:
+            if not COMPONENTS_SELECTED:
+                message = "No components have been selected yet. Please select a component first before attempting to edit."
+                return self.yield_simple_string(message)
+            else:
+                message = "The selected components available for editing are:\n"
+                for i, component in enumerate(COMPONENTS_SELECTED):
+                    if "full_file_path" in component and "system_def_name" in component:
+                        message += f"{i + 1}. {component['full_file_path']}\n"
+                message += "Please select one of the above components to edit."
+                return self.yield_simple_string(message)
+        print(f"[INFO] Preparing to edit component: {component_to_edit.get('full_file_path')}")
+        # Read the MDL file content
+        f = self._read_mdl_file_content(component_to_edit.get("full_file_path"))
+        if "Error:" in f:
+            return self.yield_simple_string(f)
+        self.active_component_context['content'] = f
+        message = f"Loaded component '{component_to_edit.get('full_file_path')}' for editing.\n"                    
+        self.conversation_mode = self.conversation_modes["EDITING"]
+        return self.editor_chain.stream({
+            "user_request": user_input,
+            "mdl_content": self.active_component_context['content'],
+            "chat_history": chat_history
+        })
+        
+            
     def process_message(self, user_input: str, chat_history: list):
         """
         Processes the user's input.
-        First, it checks for a selection command.
+        First, it checks for the command to open MotionView.
+        Second, it checks for a selection command.
+        Third, it checks for an edit command.
         If none is found, it invokes the RAG chain.
         """
         if 'open model in mv' in user_input.lower():
             self.open_motion_view()
             return "Opening MotionView with selected components..."
+        
         # 2. Check for a selection command
         if 'i choose' in user_input.lower():
             selection_response = self._handle_potential_selection(user_input, chat_history)
+            selection_response = self._add_selected_component(selection_response)
             if selection_response:
                 # If it was a selection, return the confirmation message directly
                 # We wrap it in a generator to be consistent with the streaming output
                 def message_generator():
                     yield selection_response
                 return message_generator()
-
-        # 2. If not a selection command, run the RAG chain
+        # check for exit edit mode command from user
+        if any(keyword in user_input.lower() for keyword in EXIT_EDIT_KEYWORDS):
+            if self.conversation_mode == self.conversation_modes["EDITING"]:
+                self.conversation_mode = self.conversation_modes["FINDING"]
+                self.active_component_context={"content":""}
+                print("[STATE] Exiting EDITING mode. Returning to FINDING mode.")
+                return self.yield_simple_string("Exited editing mode. You can now continue finding components.")
+            else:
+                return self.yield_simple_string("You are not in editing mode. No action taken.")
+        # 3. Check for an edit command
+        if self.conversation_mode == self.conversation_modes["EDITING"]:
+            print("[STATE] In EDITING mode. Sending to editor chain.")
+            # The user is continuing the editing conversation
+            return self.editor_chain.stream({
+                "user_request": user_input,
+                "mdl_content": self.active_component_context['content'],
+                "chat_history": chat_history
+            })
+        if any(keyword in user_input.lower() for keyword in EDIT_KEYWORDS):            
+            return self._set_up_editing_mode(user_input, chat_history)
+        # default to the RAG chain
         return self.invoke(user_input, chat_history)
     
     def invoke(self, input: str, chat_history: list):
@@ -292,6 +389,14 @@ class MdlAgent:
             "input": input,
             "chat_history": chat_history
         })
-
+    def yield_simple_string(self, text: str):
+        """
+        Utility to yield a simple string as a generator.
+        Args:
+            text (str): The text to yield.
+        Returns:
+            Generator that yields the text.
+        """
+        yield text
 # Create a single instance of the agent to be used by the UI
 mdl_agent = MdlAgent()
