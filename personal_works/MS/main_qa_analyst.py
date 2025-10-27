@@ -1,8 +1,9 @@
 # main_qa_analyst.py
 import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
-
+from pathlib import Path
 from agent_qa_test_analyst import qa_analyst_agent  # Import the QA analyst agent instance
+
 
 def respond(message, chat_history):
     """
@@ -48,4 +49,5 @@ def build_manual_ui():
     demo.queue()
     demo.launch()
 if __name__ == "__main__":
+    qa_analyst_agent.save_graph(Path(__file__).parent / "qa_graph.png")
     build_manual_ui()
