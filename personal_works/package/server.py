@@ -89,7 +89,9 @@ async def start_server():
     host = "0.0.0.0" # Use localhost for local testing
     port = 8765
     logger.info(f"Starting WebSocket server on ws://{host}:{port}")
-    async with websockets.serve(main_handler, host, port):
+    async with websockets.serve(main_handler, host, port, ping_interval=20,     # Send a ping every 20 seconds
+        ping_timeout=20       # Close connection if pong not received in 20 seconds
+        ):
         await asyncio.Future()  # run forever
 
 if __name__ == '__main__':

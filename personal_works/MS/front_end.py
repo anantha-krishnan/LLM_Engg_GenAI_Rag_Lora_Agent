@@ -114,7 +114,7 @@ class HierarchicalAgentSystem:
         agent = create_react_agent(llm, self.orchestrator_tools, prompt)
         self.orchestrator_agent_executor = AgentExecutor(
             agent=agent, tools=self.orchestrator_tools, verbose=True,
-            max_iterations=20, handle_parsing_errors=True
+            max_iterations=None, handle_parsing_errors=True
         )
         self.is_orchestrator_created = True
         return "✅ Orchestrator Agent created successfully. You can now give it a goal."
@@ -139,7 +139,7 @@ class HierarchicalAgentSystem:
         log_callback = StreamingVerboseToUIHandler(log_queue)
         self.current_callbacks = [log_callback]
 
-        final_output = "Agent run did not produce a final output."
+        final_output = "Agent is running. Check the logs for more details."
         full_log_history = []
 
         # Run the agent in a background task so we can listen to the queue simultaneously
@@ -259,13 +259,27 @@ async def chat_responder(message: str, history: list, uploaded_files: List[str])
         response = "An unknown error occurred with the conversation state."
     yield response, logs
 
-with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator") as demo:
+custom_css = """
+#agent_log_display textarea {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+}
+"""
+
+with gr.Blocks(theme=gr.themes.Soft(), title="Dynamic Agent Orchestrator",css=custom_css) as demo:
     gr.Markdown("# Dynamic Agent Orchestrator\n A conversational interface to build and command specialized AI agents.")
     with gr.Row():
         chatbot = gr.Chatbot(label="Conversation", height=600)
     with gr.Row():
-        with gr.Accordion("Agent's Thought Process", open=False):
-            agent_log = gr.Markdown("Agent logs will appear here...")
+        with gr.Accordion("Agent's Thought Process", open=True):
+            agent_log = gr.Textbox(
+                label="Agent Logs",
+                value="Agent logs will appear here...",
+                lines=15,
+                interactive=False,
+                autoscroll=True,
+                elem_id="agent_log_display" # Assign an ID for CSS targeting
+            )
     with gr.Row():
         msg_textbox = gr.Textbox(label="Your Message", placeholder="Start by describing the agent you want to build...", scale=7)
         file_uploader = gr.File(label="Upload Input Files (XML, etc.)",
@@ -314,10 +328,13 @@ You are an expert optimization engineer for Altair MotionSolve. Your goal is to 
 3. **Decide and Adjust**:
  If the difference is less than the user's threshold (e.g., 5%): This test_h_max is valid. It means you might be able to use an even larger step. Therefore, store this as a potential answer and set the lower bound of your search range to test_h_max.
  If the difference is greater than or equal to the threshold: This test_h_max is too large and invalid. You must use a smaller step. Set the upper bound of your search range to test_h_max.
-4. **Termination**: Continue this process for a fixed number of iterations (e.g., 10-15 is usually enough for good precision) or until the search range is very small.
+4. **Termination**: Continue this process until the search range is very small.
 5. **Report**: Once finished, clearly state the largest h_max you found that satisfied the condition and conclude your work.
+6. If the user provides a list of files, follow the steps 1 to 5 for each file one by one
 """  
 # you are specialist at addition. you will receive two numbers from user. Send it to the tool for addition. Reply with the result from the tool
 """
 The file c11x001m.xml is the input to motionsolve. I have already hard coded the qa working directory in the tool 'analyze_simulation_results'. This directory contains the necessary folder structure. The file c11x001m.xml is present at the correct location as required by the tool. Your goal is to find the optimal (largest) solver time step (`h_max`) for this input file that keeps the simulation result difference below 5%. First run with mode='PRE', h_max=0.001, xml_filename='c11x001m.xml' to get the golden reference result, then iteratively run with mode='NORM' and different `h_max` values to find the largest acceptable `h_max`. 
+
+The files c11x001m.xml, c11x002m.xml, c11x003m.xml, c11x101m.xml and c11x102m.xml are the input files to motionsolve. Your goal is to find the optimal (largest) solver time step (h_max) for these input files that keeps the simulation result difference below 5%. First run with mode='PRE', h_max=0.001, xml_filename='c11x001m.xml' to get the golden reference result, then iteratively run with mode='NORM' and different h_max values to find the largest acceptable h_max. For all the files first perform a golden run and then iteratively find the best h_max
 """

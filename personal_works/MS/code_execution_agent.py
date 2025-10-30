@@ -210,7 +210,7 @@ def create_code_executor() -> AgentExecutor:
     agent_executor = AgentExecutor(
         agent=agent, 
         tools=tools, 
-        max_iterations=10, 
+        max_iterations=None, 
         verbose=True, # Set to False for cleaner production logs
         handle_parsing_errors="""
         Could not parse LLM output. Please make sure to provide a valid Action and Action Input.

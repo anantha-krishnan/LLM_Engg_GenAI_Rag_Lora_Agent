@@ -28,7 +28,7 @@ def get_model_from_xml(xml_filename: str, qa_folder: Path) -> dict:
     Returns:
         dict: A dictionary with 'status', 'model_path' and 'message'
     """
-    ret_value = {"status": "success", "model_path": "", "message": ""}
+    ret_value = {"status": "success", "model_path": "", "message": "", "model_id": ""}
     try:
         qa_cmd_folder = qa_folder / "qa_cmd"
         if not qa_cmd_folder.exists():
@@ -60,6 +60,7 @@ def get_model_from_xml(xml_filename: str, qa_folder: Path) -> dict:
                 if xml_filename in NuQA_Model.get('model_file'):
                     model_path = model_dir / Path(NuQA_Model.get('model_file'))
                     ret_value["model_path"] = model_path
+                    ret_value["model_id"] = NuQA_Model.get('id')
                     ret_value["status"] = "success"
                     ret_value["message"] = f"Found model path: {model_path}"
                     return ret_value
@@ -250,7 +251,7 @@ def analyze_simulation_results(xml_filename: str, h_max: float, mode: str) -> Di
     print_error(f"Running MotionSolve simulation in mode '{mode}' with h_max={h_max}...")
     try:    
         result = subprocess.run(
-            [str(nuqa_run_bat), mode, str(qa_folder)], 
+            [str(nuqa_run_bat), mode, str(qa_folder), model_info["model_id"]], 
             check=True, 
             capture_output=True, 
             text=True,
@@ -338,17 +339,17 @@ def analyze_simulation_results(xml_filename: str, h_max: float, mode: str) -> Di
 # write test case for analyze_simulation_results
 if __name__ == "__main__":
     # test update_h_max_preserving_format
-    test_xml_name = "c11x001m.xml"
+    test_xml_name = "c11x003m.xml"
     session_dir = "C:\\Users\\anantk\\Downloads"
-    h_max = 0.002
+    h_max = 0.001
     mode="PRE"
     analyze_simulation_results(test_xml_name, h_max, mode)
-    """
+    
     
     mode="NORM"
     h_max = 0.0015
-    analyze_simulation_results(test_xml_name, h_max, mode, session_dir)
-    """
+    analyze_simulation_results(test_xml_name, h_max, mode)
+    
     #get_model_from_xml(test_xml_name, Path(session_dir) / "qa")
 
 from typing import Dict

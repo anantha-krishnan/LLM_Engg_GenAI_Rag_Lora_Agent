@@ -34,9 +34,9 @@ def reset_session():
     SESSION_STATE["instructions"] = ""
     SESSION_STATE["helper_functions"] = []
     # Create a unique directory for this session to handle file uploads
-    session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-    work_dir = os.path.join("sessions", session_id)
-    os.makedirs(work_dir, exist_ok=True)
-    SESSION_STATE["work_dir"] = os.path.abspath(work_dir)
-    print(f"New working directory created at: {SESSION_STATE['work_dir']}")
+    #session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    #work_dir = os.path.join("sessions", session_id)
+    #os.makedirs(work_dir, exist_ok=True)
+    #SESSION_STATE["work_dir"] = os.path.abspath(work_dir)
+    #print(f"New working directory created at: {SESSION_STATE['work_dir']}")
     return None

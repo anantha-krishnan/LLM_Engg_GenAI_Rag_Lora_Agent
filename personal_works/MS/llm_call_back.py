@@ -29,14 +29,14 @@ class StreamingVerboseToUIHandler(BaseCallbackHandler):
         log_entry = (
             f"{thought}\n"
             f"Action: `{action.tool}`\n"
-            f"Action Input: `{action.tool_input}`"
+            f"Action Input: `{action.tool_input}`\n"
         )
         self.log_buffer.append(log_entry)
         self._push_to_queue()
 
     def on_tool_end(self, output: str, **kwargs: Any) -> Any:
         clean_output = self.ansi_escape.sub('', str(output))
-        observation = f"Observation: {clean_output}"
+        observation = f"Observation: {clean_output}\n"
         self.log_buffer.append(observation)
         self._push_to_queue()
 
