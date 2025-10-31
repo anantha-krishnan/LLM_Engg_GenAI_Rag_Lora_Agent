@@ -41,6 +41,10 @@ model_gemini_2_0_flash_image='gemini-2.0-flash-preview-image-generation'
 gemini_text_model = model_gemini_1_5_pro
 gemini_image_model = model_gemini_2_0_flash_image
 CLAUDE_MODEL = "claude-3-5-sonnet-20240620"
+# neo4j connection details
+NEO4J_URI = "neo4j+s://3f26ade5.databases.neo4j.io"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD')
 
 # ultra-low cost models
 model_openai_4omini = "gpt-4o-mini"
@@ -49,3 +53,7 @@ CLAUDE_MODEL = "claude-3-haiku-20240307"
 gpt_caller=None
 gemini_caller=None
 claude_caller=None
+
+# datafolder
+script_dir = Path(__file__).parent
+data_dir = script_dir / ".."/"../" / "Pdata"

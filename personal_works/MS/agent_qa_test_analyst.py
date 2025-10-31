@@ -1,17 +1,19 @@
 # agent_qa_test_analyst.py
 from pathlib import Path
-from typing import List, TypedDict, Generator, Optional
+from typing import List, TypedDict, Generator, Optional, Any
 from operator import itemgetter
-
+import re
 
 import global_vars
 from ingest_ms_tests import factory_create_vector_store, factory_get_hybrid_retriever
+from neo4j_kg_builder import Neo4jConnector
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
+from langchain_core.output_parsers import JsonOutputParser
 from langchain.docstore.document import Document
 from langchain.chains import create_history_aware_retriever
 
@@ -23,12 +25,15 @@ METADATA_CSV = (Path(__file__).parent / "MS_Tests_Metadata.csv").as_posix()
 LLM_MODEL_NAME = global_vars.model_openai_4omini
 
 class GraphState(TypedDict):
+    route_decision: str
     question: str
     retrieved_context: str
     chat_history: Optional[List[BaseMessage]]
     documents: List[Document]
     message: List[BaseMessage]
     answer: str
+    knowledge_graph: Optional[Any] # Using Any for nx.MultiDiGraph for simplicity
+    kg_context: str
 
 class QAAnalystAgent:
     def __init__(self):
@@ -43,8 +48,107 @@ class QAAnalystAgent:
             temperature=0.3,
             streaming=True,
         )
+        self.neo4j_connector = Neo4jConnector(
+            global_vars.NEO4J_URI, global_vars.NEO4J_USER, global_vars.NEO4J_PASSWORD
+        )
         self.qa_graph = self._create_graph()
+    
+    def close(self):
+        self.neo4j_connector.close()
 
+    def _prepare_kg_for_generation(self, state: GraphState) -> dict:
+        """
+        Prepares the prompt for the LLM using the context from the knowledge graph.
+        """
+        print("\n---NODE (KG): PREPARING FOR GENERATION---")
+        context = state["kg_context"]
+        question = state["question"]
+        
+        sys_prompt = """You are an expert MotionSolve CAE Analyst. 
+        You have been provided with structured context extracted from a model's Knowledge Graph developed by Neo4j.
+        This context describes the components and their relationships within the simulation model.
+        Use ONLY this provided context to answer the user's question about the model's structure or analysis.
+        Be precise and refer to components by their names. If the context doesn't contain the answer, say that you cannot answer based on the provided structural information.
+        Combine this structural knowledge with your general world knowledge of mechanical engineering to provide insightful answers.
+        """
+        
+        kg_prompt = ChatPromptTemplate.from_messages([
+            ("system", sys_prompt),
+            ("user", "Based on the following structural context from the model, please answer the question.\n\nContext:\n{context}\n\nQuestion: {question}")
+        ])
+        
+        messages = kg_prompt.invoke({"context": context, "question": question})
+        return {"message": messages.to_messages()}
+    
+    def route_question(self, state: GraphState) -> str:
+        """
+        Route the question to the appropriate processing path based on its content.
+        Args:
+            state (GraphState): The current state containing the question.
+        Returns:
+            str: The name of the next node to process the question.
+        """
+        print("\n---NODE: ROUTING QUESTION---")
+        question = state["question"].lower()
+        routing_prompt = """You are an expert in routing user queries for a CAE simulation expert system.
+                 Based on the user's question, determine whether they are asking to:
+                 
+                 1. 'rag_branch': Find a specific test case, model, or documentation. These questions are about searching a database of existing tests.
+                    Examples: "Find tests for vehicle dynamics", "Show me a model for suspension analysis", "What tests use Adams solver?"
+                 
+                 2. 'kg_branch': Analyze the structure or components of a *specific, named* model. These questions are about understanding the internal workings of one model.
+                    Examples: "In the 'pairs_model', what is the revolute joint connected to?", "Describe the bodies in pairs_model.xml", "What motions are applied in the pairs model?"
+                    
+                 Respond with a JSON object containing the key "branch" with the value "rag_branch" or "kg_branch".
+                 """
+        routing_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", routing_prompt),
+                ("user", "{question}"),
+            ]
+        )
+        routing_chain = routing_prompt | self.llm | JsonOutputParser()
+        route = routing_chain.invoke({"question": question})
+        route_answer = route.get("branch")
+        print(f"---INFO: Routing decision: {route_answer}---")
+        return {"route_decision": route_answer}
+    
+    def _query_neo4j_kg(self, state: GraphState) -> dict:
+        """
+        Queries the Neo4j knowledge graph to extract context relevant to the question.
+        """
+        print("\n---NODE (KG): QUERYING NEO4J KNOWLEDGE GRAPH---")
+        question = state["question"]
+        
+        # A simple but effective entity extraction: find anything in quotes.
+        # This helps us find component names like "Ground Body" in the user's query.
+        entities = re.findall(r"'([^']*)'|\"([^\"]*)\"", question)
+        # Flatten the list of tuples from regex findall
+        entities = [name for tpl in entities for name in tpl if name]
+
+        if not entities:
+            context = "The user's question did not specify a component name to analyze. Please ask them to specify a component, for example: 'Describe the component named \"Ground Body\"'."
+            return {"kg_context": context}
+
+        print(f"---INFO: Extracted entities from question: {entities}---")
+        
+        all_results = []
+        for entity_name in entities:
+            # This Cypher query finds a node by its 'name' property and also fetches its direct neighbors.
+            cypher_query = """
+            MATCH (n {name: $name})
+            OPTIONAL MATCH (n)-[r]-(neighbor)
+            RETURN n, r, neighbor
+            """
+            results = self.neo4j_connector.query(cypher_query, parameters={"name": entity_name})
+            all_results.extend(results)
+
+        # Format the raw Neo4j results into clean text for the LLM
+        kg_context = self.neo4j_connector.format_results_to_text(all_results)
+        print(f"---INFO: Extracted KG Context:\n{kg_context}---")
+        
+        return {"kg_context": kg_context}
+    
     def _history_aware_retrieval(self, state: GraphState) -> dict:
         """
         Retrieve relevant documents based on the question and chat history in the state.
@@ -120,20 +224,38 @@ class QAAnalystAgent:
     def _create_graph(self) -> StateGraph:
         workflow = StateGraph(GraphState)
 
+        workflow.add_node("route_question", self.route_question)
+
         workflow.add_node("history_aware_retrieval", self._history_aware_retrieval)
         workflow.add_node("retrieve", self._retrieve_documents)
-        workflow.add_node("prepare_generation", self._prepare_for_generation)
+        workflow.add_node("prepare_rag_generation", self._prepare_rag_for_generation)
+
+        workflow.add_node("query_neo4j_kg", self._query_neo4j_kg)
+        workflow.add_node("prepare_kg_generation", self._prepare_kg_for_generation)
+
         workflow.add_node("generate_answer", self._generate_final_answer)
 
-        workflow.set_entry_point("history_aware_retrieval")
+        workflow.set_entry_point("route_question")
+        workflow.add_conditional_edges(
+            "route_question",
+            lambda state: state["route_decision"],
+            {
+                "rag_branch": "history_aware_retrieval",
+                "kg_branch": "query_neo4j_kg",
+            },
+        )
         workflow.add_edge("history_aware_retrieval", "retrieve")
-        workflow.add_edge("retrieve", "prepare_generation")
-        workflow.add_edge("prepare_generation", "generate_answer")
+        workflow.add_edge("retrieve", "prepare_rag_generation")
+        workflow.add_edge("prepare_rag_generation", "generate_answer")
+
+        workflow.add_edge("query_neo4j_kg", "prepare_kg_generation") 
+        workflow.add_edge("prepare_kg_generation", "generate_answer")
+
         workflow.add_edge("generate_answer", END)
 
         return workflow.compile()
 
-    def _prepare_for_generation(self, state: GraphState) -> dict:
+    def _prepare_rag_for_generation(self, state: GraphState) -> dict:
         """
         Prepare the context and question for the LLM generation.
         Args:
