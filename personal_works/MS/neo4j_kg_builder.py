@@ -18,7 +18,13 @@ class Neo4jConnector:
 
     def close(self):
         self.driver.close()
-
+    
+    def entity_exists(self, entity_name: str) -> bool:
+        """A simple, fast query to check if a node with the given name exists."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (n {name: $name}) RETURN n LIMIT 1", name=entity_name)
+            return result.single() is not None
+        
     def query(self, query: str, parameters: Optional[dict] = None) -> List[Any]:
         """Runs a query and returns the results."""
         with self.driver.session() as session:
@@ -172,6 +178,60 @@ class Neo4jConnector:
             ---
             """
             return full_dossier
+    # In your Neo4jConnector class in neo4j_kg_builder.py or similar
+
+    def get_dossier_for_any_entity(self, entity_name: str) -> str:
+        """
+        Generates a context-rich "dossier" for ANY given entity by name.
+        It uses a single, generic query that leverages the enriched graph model
+        (e.g., the [:INFLUENCES] relationships) to find all relevant context.
+        """
+        # This one query now works for ALL entity types!
+        cypher_query = """
+        MATCH (n {name: $name})
+        // Get direct neighbors (for structure)
+        OPTIONAL MATCH (n)-[r]-(neighbor)
+        // Get numerical data if it exists
+        OPTIONAL MATCH (n)-[:HAS_COMPONENT]->(output:OutputComponent)
+        RETURN n, 
+            collect(DISTINCT {rel: r, end_node: neighbor}) as neighbors,
+            collect(DISTINCT output) as outputs
+        """
+        with self.driver.session() as session:
+            result = session.run(cypher_query, name=entity_name).single()
+
+            if not result or not result["n"]:
+                return f"--- Dossier for '{entity_name}' ---\nEntity not found in the knowledge graph."
+
+            # We now have to format the result manually, but the logic is simple.
+            node_data = result["n"]
+            neighbor_data = result["neighbors"]
+            output_data = result["outputs"]
+
+            # Use our standard formatter for the primary node and its outputs
+            dossier_parts = [
+                self.format_results_to_text([{'n': node_data}]),
+                self.format_results_to_text([{'n': out} for out in output_data])
+            ]
+            
+            # Manually format the neighbors to be clean
+            neighbor_lines = ["\n--- Connections & Influences ---"]
+            if not neighbor_data:
+                neighbor_lines.append("No direct connections found.")
+            else:
+                for item in neighbor_data:
+                    rel = item['rel']
+                    end_node = item['end_node']
+                    if rel and end_node: # Filter out nulls from OPTIONAL MATCH
+                        neighbor_lines.append(f"- Is connected via '{rel.type}' to '{end_node.get('name', 'Unnamed')}' (Type: {list(end_node.labels)[0]})")
+
+            dossier_parts.append("\n".join(neighbor_lines))
+            
+            # Combine and filter out empty strings
+            full_dossier = "\n".join(filter(None, dossier_parts))
+            
+            return f"--- Dossier for '{entity_name}' ---\n{full_dossier}"
+
 class Neo4jUploader:
     """
     Handles the connection to Neo4j and the uploading of graph data.
@@ -470,7 +530,53 @@ class Neo4jUploader:
                     print(f"  - No known components found in '{results_file.name}'.")
 
         print("--- Multi-Component Results Import Finished ---")
+    # In your Neo4jUploader class in main_neo4j_importer.py
 
+    def create_summary_relationships(self):
+        """
+        Creates high-level "shortcut" relationships like [:INFLUENCES]
+        and ENRICHES them with properties describing the path.
+        """
+        with self.driver.session() as session:
+            print("\n--- Creating Enriched Summary Relationships for Analysis ---")
+
+            # This query now captures the joint's name and adds it as a property to the new relationship.
+            query = """
+            // Find all the valid paths from a motion to a body
+            MATCH (motion:Motion)-[:APPLIED_TO]->(joint:Joint)
+            MATCH (body:Body)<-[:HAS_MARKER]-(marker:Reference_Marker)
+            WHERE joint.i_marker_id = marker.ms_id OR joint.j_marker_id = marker.ms_id
+
+            // Use the WITH clause to pass the path information along
+            WITH motion, joint, body
+
+            // Find the PostRequests that measure that body
+            MATCH (pr:PostRequest)
+            WHERE pr.measures_marker IN [(body)<-[:HAS_MARKER]-(m) | m.ms_id]
+
+            // --- AGGREGATION STEP ---
+            // Group by the start (motion) and end (pr) nodes of our desired relationship.
+            // For each group, collect all the intermediate components into unique lists.
+            WITH motion, pr,
+                collect(DISTINCT joint.name) as via_joint_names,
+                collect(DISTINCT joint.ms_id) as via_joint_ids,
+                collect(DISTINCT body.name) as on_body_names,
+                collect(DISTINCT body.ms_id) as on_body_ids
+
+            // --- FINAL MERGE STEP ---
+            // Now that we have the complete picture for each (motion, pr) pair,
+            // create the single relationship and set its properties using the aggregated lists.
+            MERGE (motion)-[r:INFLUENCES]->(pr)
+            SET r.via_joint_names = via_joint_names,
+                r.on_body_names = on_body_names,
+                r.via_joint_ids = via_joint_ids,
+                r.on_body_ids = on_body_ids,
+                r.reason = "Motion influences this PostRequest via the listed joints and bodies."
+            """
+            result = session.run(query)
+            summary = result.consume()
+            print(f"  + Created/Updated {summary.counters.relationships_created} [:INFLUENCES] relationships with path context.")
+            
 if __name__ == "__main__":
     # Same as before...
     script_dir = Path(__file__).parent
@@ -489,6 +595,7 @@ if __name__ == "__main__":
         uploader.create_constraints()
         uploader.upload_graph_from_xml(XML_FILE)
         uploader.upload_simulation_results(data_dir)
+        uploader.create_summary_relationships() 
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")
         print("You can now explore the graph in the Neo4j Browser.")

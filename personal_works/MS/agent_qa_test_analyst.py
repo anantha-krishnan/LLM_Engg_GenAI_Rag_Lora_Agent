@@ -15,6 +15,7 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from langchain.docstore.document import Document
+from langchain_core.pydantic_v1 import BaseModel, Field
 
 from langgraph.graph import StateGraph, END
 
@@ -27,7 +28,7 @@ class GraphState(TypedDict):
     # Original fields
     route_decision: str
     question: str
-    retrieved_context: str
+    standalone_question: str # Replaces retrieved_context for holding the question
     chat_history: Optional[List[BaseMessage]]
     documents: List[Document]
     message: List[BaseMessage]
@@ -39,6 +40,9 @@ class GraphState(TypedDict):
     entities_to_query: Optional[List[str]]
     queried_entities: set
     judge_decision: str
+
+class DossierReviewOutput(BaseModel):
+    next_entities: List[str] = Field(..., description="A list of NEW component names that require their own detailed dossier. Should be an empty list if the current dossier is sufficient.")
 
 class QAAnalystAgent:
     def __init__(self):
@@ -67,7 +71,7 @@ class QAAnalystAgent:
     def route_question(self, state: GraphState) -> str:
         """ Route the question to the appropriate processing path. """
         print("\n---NODE: ROUTING QUESTION---")
-        question = state["question"].lower()
+        question = state["standalone_question"].lower()
         routing_prompt_str = """You are an expert in routing user queries for a CAE simulation expert system.
                  Based on the user's question, determine which of the three paths they should follow:
                  
@@ -94,16 +98,19 @@ class QAAnalystAgent:
         # ... (Your existing code for this function is perfect)
         question = state["question"]
         chat_history = state.get("chat_history", [])
-        contextualize_q_system_prompt = """Given a chat history and the latest user question which might reference context in the chat history, formulate a standalone question which can be understood without the chat history. Do NOT answer the question, just reformulate it if needed and otherwise return it as is."""
+        contextualize_q_system_prompt = """Given a chat history and the latest user question which might reference context
+          in the chat history, formulate a standalone question which can be understood 
+          without the chat history. Do NOT answer the question, just reformulate it if needed
+          and otherwise return it as is."""
         contextualize_q_prompt = ChatPromptTemplate.from_messages([("system", contextualize_q_system_prompt), MessagesPlaceholder(variable_name="chat_history"), ("human", "{question}")])
         history_retriever = contextualize_q_prompt | self.llm | StrOutputParser()
         retrieved_context = history_retriever.invoke({"chat_history": chat_history, "question": question})
-        return {"retrieved_context": retrieved_context or question}
+        return {"standalone_question": retrieved_context or question}
 
     def _retrieve_documents(self, state: GraphState) -> dict:
         """ Retrieve relevant documents from vector store. """
         print("\n---NODE (RAG): RETRIEVING DOCUMENTS---")
-        question = state["retrieved_context"]
+        question = state["standalone_question"]
         docs = self.retriever.invoke(question)
         return {"documents": docs}
 
@@ -123,9 +130,9 @@ class QAAnalystAgent:
     # ===================================================================
 
     def _query_kg_for_structure(self, state: GraphState) -> dict:
-        """ [THIS WAS THE MISSING FUNCTION] Queries Neo4j for structural context. """
+        """ Queries Neo4j for structural context. """
         print("\n---NODE (KG Structure): QUERYING NEO4J---")
-        question = state["question"]
+        question = state["standalone_question"]
         entities = re.findall(r"'([^']*)'|\"([^\"]*)\"", question)
         entities = [name for tpl in entities for name in tpl if name]
 
@@ -165,7 +172,7 @@ class QAAnalystAgent:
     def _query_kg_for_initial_analysis(self, state: GraphState) -> dict:
         """ Starts the analysis loop by identifying the initial entity. """
         print("\n---NODE (Analysis Loop): STARTING INVESTIGATION---")
-        question = state["question"]
+        question = state["standalone_question"]
         entities = re.findall(r"'([^']*)'|\"([^\"]*)\"", question)
         entities = [name for tpl in entities for name in tpl if name]
         if not entities:
@@ -175,102 +182,122 @@ class QAAnalystAgent:
 
     # In your QAAnalystAgent class, replace the entire judge_completeness function with this:
 
-    def judge_completeness(self, state: GraphState) -> dict:
+    def judge_dossier_completeness(self, state: GraphState) -> dict:
         """
-        'Critic' node. Its only job is to identify NEW entities to query.
-        The decision to stop or continue is made by the graph's edge logic.
+        The 'Critic'. Reviews the current dossier and decides if any of the components
+        mentioned *within it* need a more detailed, separate dossier to be generated.
         """
-        print("\n---NODE (Analysis Loop): IDENTIFYING NEXT STEPS---")
-        question = state["question"]
-        current_context = state["kg_context"]
+        print("\n---NODE (Analysis Loop): REVIEWING DOSSIER FOR DEEP-DIVE---")
+        question = state["standalone_question"]
+        current_dossier = state["kg_context"]
         queried_list = list(state.get("queried_entities", set()))
 
-        judge_prompt_str = """You are a methodical Root Cause Analyst for CAE simulations.
-        Your task is to identify if there are any NEW, relevant components to investigate to answer the user's question.
+        judge_prompt_str = """You are an expert CAE Analyst reviewing a case file (a "dossier").
+        Your task is to determine if you need more detailed information about any of the components mentioned in the file to conclusively answer the user's question.
 
         **User's Question:**
         {question}
 
-        **Components Already Investigated:**
+        **Components Already Detailed in Dossier:**
         {queried_entities_list}
 
-        **Current Dossier of Information:**
+        **Current Dossier:**
         {context}
 
         **Your Task:**
-        Based on the dossier, identify the names of any components that are relevant to the question but are NOT in the "Components Already Investigated" list.
-        
+        Read the dossier. If you see a reference to a critical intermediate component (e.g., a Joint mentioned in an `[:INFLUENCES]` relationship) that is NOT already in the "Components Already Detailed" list, you should request a deep-dive on it.
+
         **Output Format:**
-        Respond with a single JSON object containing one key:
-        - "next_entities": A list of NEW component names (strings) to query for more context.
-        - **If you cannot find any new, relevant, un-investigated components, you MUST return an empty list: {{"next_entities": []}}**
+        Respond with a single JSON object with one key:
+        - "next_entities": A list of NEW component names that require their own detailed dossier.
+        - **If the current dossier is sufficient to answer the question, you MUST return an empty list: {{"next_entities": []}}**
         """
         
         judge_prompt = ChatPromptTemplate.from_template(judge_prompt_str)
-        # Ensure the model is likely to return valid JSON
-        judge_chain = judge_prompt | self.llm.with_structured_output(
-            schema={"next_entities": "list[str]"},
-            method="json_mode"
-        )
+        judge_chain = judge_prompt | self.llm.with_structured_output(schema=DossierReviewOutput)
 
-        print("---INFO: Asking for next entities to investigate...---")
+        print("---INFO: Asking for potential deep-dive targets...---")
         response = judge_chain.invoke({
             "question": question,
-            "context": current_context,
+            "context": current_dossier,
             "queried_entities_list": str(queried_list)
         })
         
-        entities = response.get("next_entities", [])
-        print(f"---INFO: Judge identified next entities: {entities}---")
+        suggested_entities = response.next_entities if response else []
+        print(f"---INFO: Judge requested deep-dive on: {suggested_entities}---")
+        # We will only proceed with entities that are confirmed to exist.
+        validated_entities = []
+        if suggested_entities:
+            for entity in suggested_entities:
+                if self.neo4j_connector.entity_exists(entity):
+                    validated_entities.append(entity)
+                else:
+                    # This is where we catch the hallucination!
+                    print(f"---WARNING: Judge hallucinated a non-existent entity: '{entity}'. Discarding.---")
 
-        # The function now only returns the list of entities to query.
-        return {"entities_to_query": entities}
-    
-    def _query_kg_for_more_context(self, state: GraphState) -> dict:
-        """ 'Action' node that queries the KG for entities requested by the judge. """
-        print("\n---NODE (Analysis Loop): GATHERING MORE EVIDENCE---")
+        print(f"---INFO: Validated entities for deep-dive: {validated_entities}---")
+        # We will only proceed with entities that are confirmed to exist.
+        # Return ONLY the list of valid, existing entities that are not already queried.
+        validated_unique_entities = [entity for entity in validated_entities if entity not in queried_list]
+
+        return {"entities_to_query": validated_unique_entities}
+
+    def _query_for_more_context(self, state: GraphState) -> dict:
+        """
+        Performs a "deep-dive" by generating a full dossier for each entity
+        requested by the judge and appending it to the main context.
+        """
+        print("\n---NODE (Analysis Loop): PERFORMING DEEP-DIVE---")
         entities_to_query = state["entities_to_query"]
         queried_entities = state["queried_entities"]
-        current_context = state.get("kg_context", "")
+        current_dossier = state.get("kg_context", "")
+
+        # Safety check: only query new entities
         new_entities = [entity for entity in entities_to_query if entity not in queried_entities]
-        if not new_entities:
-            print("---INFO: No new entities to query. Halting loop.---")
-            return {"judge_decision": "generate", "queried_entities": queried_entities}
-
-        print(f"---INFO: Fetching new context for: {new_entities}---")
-        newly_found_context_parts = []
-        for entity_name in new_entities:
-            cypher_query = """MATCH (n {name: $name}) OPTIONAL MATCH (n)-[r]-(neighbor) WITH n, r, neighbor OPTIONAL MATCH (n)-[:HAS_COMPONENT]->(oc:OutputComponent) RETURN n, r, neighbor, collect(oc) as components"""
-            results = self.neo4j_connector.query(cypher_query, parameters={"name": entity_name})
-            structural_results, data_results = [], []
-            for record in results:
-                structural_results.append({k: v for k, v in record.items() if k != 'components'})
-                for comp_node in record['components']: data_results.append({'n': comp_node})
-            newly_found_context_parts.append(self.neo4j_connector.format_results_to_text(structural_results))
-            newly_found_context_parts.append(self.neo4j_connector.format_results_to_text(data_results))
         
-        updated_context = current_context + "\n\n--- Additional Context ---\n" + "\n".join(filter(None, newly_found_context_parts))
-        updated_queried_set = queried_entities.union(set(new_entities))
-        return {"kg_context": updated_context.strip(), "queried_entities": updated_queried_set}
+        if not new_entities:
+            return {"entities_to_query": new_entities} # No changes needed
 
+        print(f"---INFO: Generating detailed dossiers for: {new_entities}---")
+
+        # Loop and call our powerful, universal dossier function for each new entity
+        additional_dossiers = []
+        for entity_name in new_entities:
+            dossier = self.neo4j_connector.get_dossier_for_any_entity(entity_name)
+            additional_dossiers.append(dossier)
+        
+        # Append the new, detailed dossiers to the main context
+        updated_dossier = current_dossier + "\n\n" + "\n\n".join(additional_dossiers)
+        updated_queried_set = queried_entities.union(set(new_entities))
+
+        return {
+            "kg_context": updated_dossier.strip(),
+            "queried_entities": updated_queried_set
+        }
     
     def _prepare_final_analysis_for_generation(self, state: GraphState) -> dict:
-        """ Prepares the final, complete dossier for the answer synthesizer. """
-        print("\n---NODE (Analysis Loop): PREPARING FINAL DOSSIER---")
+        """ Prepares the prompt using the combined multi-entity dossier. """
+        print("\n---NODE (Holistic Analysis): PREPARING MULTI-ENTITY GENERATION---")
         context = state["kg_context"]
-        question = state["question"]
-        sys_prompt = """You are an expert Altair MotionSolve simulation analyst performing a final root cause analysis.
-        You have a complete dossier of information gathered from a knowledge graph.
-        Synthesize all information into a single, comprehensive, and conclusive answer.
-        1. Summarize the Symptom (from the numerical data).
-        2. Present the Evidence (from the structural context).
-        3. State your Conclusion (the causal link).
-        4. Provide Recommendations.
-        """
-        kg_prompt = ChatPromptTemplate.from_messages([("system", sys_prompt), ("user", "**Dossier:**\n{context}\n\n**Original Question:** {question}")])
-        messages = kg_prompt.invoke({"context": context, "question": question})
-        return {"message": messages.to_messages()}
+        question = state["question"] # Use the original question for context
         
+        sys_prompt = """You are an expert Altair MotionSolve simulation analyst.
+        You have been provided a comprehensive **Investigation Dossier** containing detailed information about one or more components from a simulation model. Each component's section is clearly marked.
+
+        Your task is to synthesize the information from ALL provided sections of the dossier to answer the user's question. The question may require you to:
+        - **Compare and contrast** two or more components.
+        - **Explain the relationship** between different components.
+        - **Trace a causal chain** that links multiple components together.
+
+        Carefully read all parts of the provided dossier. Your answer must be a cohesive analysis that integrates information from the different sections to form a complete picture. Be precise and refer to components by their names as listed in the dossier.
+        """
+        
+        kg_prompt = ChatPromptTemplate.from_messages([
+            ("system", sys_prompt),
+            ("user", "Please analyze the following combined dossier to answer my question.\n\n**Combined Dossier:**\n{context}\n\n**Original Question:** {question}")
+        ])
+        messages = kg_prompt.invoke({"context": context, "question": question})
+        return {"message": messages.to_messages()}   
     # ===================================================================
     # SECTION 5: FINAL ANSWER GENERATION AND GRAPH DEFINITION
     # ===================================================================
@@ -286,91 +313,96 @@ class QAAnalystAgent:
             yield {"answer": final_ans}
         return {"answer": final_ans}
 
+    # In your QAAnalystAgent class, this is the FINAL _create_graph
+
     def _create_graph(self) -> StateGraph:
-        """
-        Compiles all the nodes and edges into the final, runnable graph.
-        This workflow features three distinct branches: RAG, Structural KG, and Causal Analysis KG.
-        """
         workflow = StateGraph(GraphState)
 
-        # --- 1. Add All Nodes to the Graph ---
-
-        # Main router
-        workflow.add_node("route_question", self.route_question)
-
-        # Nodes for the RAG branch
+        # --- Add All Nodes ---
         workflow.add_node("history_aware_retrieval", self._history_aware_retrieval)
+        workflow.add_node("route_question", self.route_question)
         workflow.add_node("retrieve", self._retrieve_documents)
         workflow.add_node("prepare_rag_generation", self._prepare_rag_for_generation)
-
-        # Nodes for the simple Structural KG branch
         workflow.add_node("query_kg_for_structure", self._query_kg_for_structure)
         workflow.add_node("prepare_kg_structure_generation", self._prepare_kg_structure_for_generation)
         
-        # Nodes for the advanced Causal Analysis KG branch (the "Dossier" method)
+        # --- The Hybrid Analysis Branch Nodes ---
         workflow.add_node("run_holistic_analysis_query", self._run_holistic_analysis_query)
+        workflow.add_node("judge_dossier_completeness", self.judge_dossier_completeness)
+        workflow.add_node("query_for_more_context", self._query_for_more_context)
         workflow.add_node("prepare_final_analysis", self._prepare_final_analysis_for_generation)
         
-        # Final shared node for generating the answer
         workflow.add_node("generate_answer", self._generate_final_answer)
 
-        # --- 2. Define the Graph's Flow (Edges) ---
+        # --- Define the Graph's Flow ---
+        workflow.set_entry_point("history_aware_retrieval")
+        workflow.add_edge("history_aware_retrieval", "route_question")
 
-        # The graph starts at the router
-        workflow.set_entry_point("route_question")
-
-        # The router directs the flow to one of the three branches
-        workflow.add_conditional_edges(
-            "route_question",
-            lambda state: state["route_decision"],
-            {
-                "rag_branch": "history_aware_retrieval",
-                "kg_structural_branch": "query_kg_for_structure",
-                "kg_analysis_branch": "run_holistic_analysis_query",
-            }
-        )
+        workflow.add_conditional_edges("route_question", lambda state: state["route_decision"], {
+            "rag_branch": "retrieve",
+            "kg_structural_branch": "query_kg_for_structure",
+            "kg_analysis_branch": "run_holistic_analysis_query",
+        })
         
-        # Define the linear flow for the RAG branch
-        workflow.add_edge("history_aware_retrieval", "retrieve")
+        # RAG & Structural Branches (linear)
         workflow.add_edge("retrieve", "prepare_rag_generation")
         workflow.add_edge("prepare_rag_generation", "generate_answer")
-
-        # Define the linear flow for the Structural KG branch
         workflow.add_edge("query_kg_for_structure", "prepare_kg_structure_generation")
         workflow.add_edge("prepare_kg_structure_generation", "generate_answer")
 
-        # Define the linear flow for the Causal Analysis KG branch
-        workflow.add_edge("run_holistic_analysis_query", "prepare_final_analysis")
-        workflow.add_edge("prepare_final_analysis", "generate_answer")
+        # --- The HYBRID Analysis Branch ---
+        # After the initial dossier, the judge reviews it
+        workflow.add_edge("run_holistic_analysis_query", "judge_dossier_completeness")
         
-        # The final node marks the end of the process
+        # The judge's decision point (controlled by code)
+        workflow.add_conditional_edges(
+            "judge_dossier_completeness",
+            # If the judge found new entities to deep-dive on, re-query.
+            # Otherwise, the dossier is complete, so generate the answer.
+            lambda state: "re-query" if state.get("entities_to_query") else "generate",
+            {
+                "re-query": "query_for_more_context",
+                "generate": "prepare_final_analysis",
+            }
+        )
+        
+        # The deep-dive loop: after getting more context, go back to the judge for another review
+        workflow.add_edge("query_for_more_context", "judge_dossier_completeness")
+        
+        # The exit path from the loop
+        workflow.add_edge("prepare_final_analysis", "generate_answer")
         workflow.add_edge("generate_answer", END)
 
         return workflow.compile()
+    # In your QAAnalystAgent class in agent_qa_test_analyst.py
 
     def _run_holistic_analysis_query(self, state: GraphState) -> dict:
         """
-        Runs the new, MARKER-AWARE multi-hop query to gather the complete dossier
-        for the PostRequest mentioned in the user's question.
+        Runs the initial dossier query for all entities in the question and
+        initializes the state for the optional deep-dive loop.
         """
-        print("\n---NODE (Holistic Analysis): GATHERING MARKER-AWARE DOSSIER---")
-        question = state["question"]
-        
-        # Extract the PostRequest name, e.g., 'Body 1-left(Output 0)'
+        print("\n---NODE (Holistic Analysis): GATHERING INITIAL DOSSIER---")
+        question = state["standalone_question"]
         entities = re.findall(r"'([^']*)'|\"([^\"]*)\"", question)
-        if not entities:
-            return {"kg_context": "Could not identify a component name in the question to analyze."}
-        
-        request_name = entities[0][0]
-        # request_name = [name for tpl in request_name for name in tpl if name]
+        entities = [name for tpl in entities for name in tpl if name]
 
-        print(f"---INFO: Running holistic analysis for PostRequest: {request_name}---")
+        if not entities:
+            return {"kg_context": "Could not identify component names.", "queried_entities": set()}
         
-        # Call our new, superior connector method
-        dossier = self.neo4j_connector.get_full_context_for_output(request_name)
+        print(f"---INFO: Found {len(entities)} initial entities: {entities}---")
         
-        print(f"---INFO: Generated Dossier:\n{dossier}---")
-        return {"kg_context": dossier}   
+        all_dossiers = []
+        for entity_name in entities:
+            dossier = self.neo4j_connector.get_dossier_for_any_entity(entity_name)
+            all_dossiers.append(dossier)
+        
+        final_context = "\n\n".join(all_dossiers)
+        
+        # --- CRITICAL CHANGE: Initialize the state for the loop ---
+        return {
+            "kg_context": final_context,
+            "queried_entities": set(entities) # Prime the set with the entities we just queried
+        }
     # ===================================================================
     # SECTION 6: HELPER METHODS AND MAIN EXECUTION
     # ===================================================================
