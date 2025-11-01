@@ -19,6 +19,17 @@ class Neo4jConnector:
     def close(self):
         self.driver.close()
     
+    def get_node_properties(self, entity_name: str) -> Optional[dict]:
+        """Retrieves the full property dictionary for a single node by name."""
+        with self.driver.session() as session:
+            result = session.run("MATCH (n {name: $name}) RETURN n", name=entity_name).single()
+            if result and result["n"]:
+                # Combine properties and labels for a complete picture
+                node_data = dict(result["n"])
+                node_data['_labels'] = list(result["n"].labels)
+                return node_data
+            return None
+        
     def entity_exists(self, entity_name: str) -> bool:
         """A simple, fast query to check if a node with the given name exists."""
         with self.driver.session() as session:
@@ -53,7 +64,7 @@ class Neo4jConnector:
                 # --- POC CHANGE: Output FULL data for OutputComponent nodes ---
                 if "OutputComponent" in node.labels:
                     component_name = node.get('component', 'N/A')
-                    lines.append(f"Output Component '{component_name}' (Type: OutputComponent):")
+                    lines.append(f"Output Component '{component_name}':")
                     
                     time_vals = node.get('time_values', [])
                     output_vals = node.get('output_values', [])
@@ -62,7 +73,7 @@ class Neo4jConnector:
                         # Directly embed the full lists as strings into the context
                         lines.append(f"  - Number of Data Points: {len(time_vals)}")
                         lines.append(f"  - Time Values: {str(time_vals)}")
-                        lines.append(f"  - Output Values: {str(output_vals)}")
+                        lines.append(f"  - {component_name} Values: {str(output_vals)}")
                     else:
                         lines.append("  - No time series data found.")
 

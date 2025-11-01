@@ -16,6 +16,7 @@ from langchain.schema.output_parser import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from langchain.docstore.document import Document
 from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_community.document_loaders import WebBaseLoader
 
 from langgraph.graph import StateGraph, END
 
@@ -191,7 +192,7 @@ class QAAnalystAgent:
         question = state["standalone_question"]
         current_dossier = state["kg_context"]
         queried_list = list(state.get("queried_entities", set()))
-
+    
         judge_prompt_str = """You are an expert CAE Analyst reviewing a case file (a "dossier").
         Your task is to determine if you need more detailed information about any of the components mentioned in the file to conclusively answer the user's question.
 
@@ -256,15 +257,24 @@ class QAAnalystAgent:
         new_entities = [entity for entity in entities_to_query if entity not in queried_entities]
         
         if not new_entities:
-            return {"entities_to_query": new_entities} # No changes needed
+            return {"entities_to_query": []} # Your correct bug fix from before!
 
-        print(f"---INFO: Generating detailed dossiers for: {new_entities}---")
+        print(f"---INFO: Generating enriched dossiers for: {new_entities}---")
 
-        # Loop and call our powerful, universal dossier function for each new entity
         additional_dossiers = []
         for entity_name in new_entities:
-            dossier = self.neo4j_connector.get_dossier_for_any_entity(entity_name)
-            additional_dossiers.append(dossier)
+            # Step 1: Get the standard graph dossier
+            graph_dossier = self.neo4j_connector.get_dossier_for_any_entity(entity_name)
+            
+            # Step 2: Get the raw node data for enrichment
+            raw_node_data = self.neo4j_connector.get_node_properties(entity_name)
+            
+            # Step 3: Call the auto-researcher to get the documentation explanation
+            doc_explanation = self._get_documentation_explanation(raw_node_data)
+            
+            # Step 4: Combine them into a single, enriched dossier block
+            enriched_dossier = graph_dossier + doc_explanation
+            additional_dossiers.append(enriched_dossier)
         
         # Append the new, detailed dossiers to the main context
         updated_dossier = current_dossier + "\n\n" + "\n\n".join(additional_dossiers)
@@ -281,15 +291,18 @@ class QAAnalystAgent:
         context = state["kg_context"]
         question = state["question"] # Use the original question for context
         
-        sys_prompt = """You are an expert Altair MotionSolve simulation analyst.
-        You have been provided a comprehensive **Investigation Dossier** containing detailed information about one or more components from a simulation model. Each component's section is clearly marked.
-
-        Your task is to synthesize the information from ALL provided sections of the dossier to answer the user's question. The question may require you to:
+        sys_prompt = """You are an expert Altair MotionSolve analyst. You have been provided a complete, enriched **Investigation Dossier** that includes both data from the user's model AND explanations from the official documentation.
+        Synthesize ALL information in this file to provide a comprehensive, expert-level answer to the user's question. 
+        Start by defining the key components using the provided explanations, 
+        then explain how they are used in the model to cause the observed behavior.
+    
+        The question may require you to:
         - **Compare and contrast** two or more components.
         - **Explain the relationship** between different components.
         - **Trace a causal chain** that links multiple components together.
 
-        Carefully read all parts of the provided dossier. Your answer must be a cohesive analysis that integrates information from the different sections to form a complete picture. Be precise and refer to components by their names as listed in the dossier.
+        Carefully read all parts of the provided dossier. Your answer must be a cohesive analysis that integrates information from the different sections to form a complete picture. 
+        Be precise and refer to components by their names as listed in the dossier.
         """
         
         kg_prompt = ChatPromptTemplate.from_messages([
@@ -312,7 +325,73 @@ class QAAnalystAgent:
             final_ans += chunk
             yield {"answer": final_ans}
         return {"answer": final_ans}
+    # In your QAAnalystAgent class in agent_qa_test_analyst.py
 
+    def _get_documentation_explanation(self, node_data: dict) -> str:
+        """
+        The "Auto-Researcher" tool. Takes a node's raw data, determines its type,
+        fetches the relevant documentation, and uses an LLM to synthesize an
+        explanation of that specific node's properties.
+        """
+        if not node_data:
+            return ""
+
+        # Determine the primary type of the node (e.g., "Joint", "Motion")
+        node_type = next((label for label in node_data.get('_labels', []) if label != 'Node'), None)
+        node_data.pop('_labels', None)  # Clean up the data dict
+        if not node_type:
+            return ""
+
+        term_to_lookup = node_type.lower()
+        
+        # The predefined map of high-frequency terms to specific URLs
+        url_map = {
+            "marker": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_90.htm",
+            "motion": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_74.htm",
+            "joint": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_41.htm",
+            "body": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_35.htm",
+            "postrequest": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_83.htm",
+            # Add more mappings as needed
+        }
+
+        url_to_load = url_map.get(term_to_lookup)
+        if not url_to_load:
+            print(f"  -> No documentation URL mapped for type '{node_type}'. Skipping enrichment.")
+            return ""
+
+        try:
+            print(f"  -> Auto-researching type '{node_type}' for entity '{node_data.get('name')}'...")
+            loader = WebBaseLoader([url_to_load])
+            docs = loader.load()
+            raw_content = "\n".join([doc.page_content for doc in docs])
+
+            # Use a sub-LLM call to synthesize an explanation
+            synthesis_prompt_template = """You are a helpful assistant. Your task is to explain a specific piece of a simulation model's data using the provided official documentation.
+
+            **Official Documentation for a '{term}' component:**
+            {documentation}
+
+            **Data from User's Specific Component:**
+            {data_context}
+
+            **Your Task:**
+            Based ONLY on the Official Documentation, provide a concise explanation of the key properties and values seen in the "Data from User's Specific Component".
+            """
+            
+            synthesis_prompt = ChatPromptTemplate.from_template(synthesis_prompt_template)
+            synthesis_chain = synthesis_prompt | self.llm | StrOutputParser()
+            
+            explanation = synthesis_chain.invoke({
+                "documentation": raw_content,
+                "data_context": str(node_data),
+                "term": node_type
+            })
+            
+            return f"\n--- Official Documentation Explanation for this {node_type} ---\n{explanation}"
+
+        except Exception as e:
+            print(f"  -> ERROR during documentation enrichment for '{node_type}': {e}")
+            return ""
     # In your QAAnalystAgent class, this is the FINAL _create_graph
 
     def _create_graph(self) -> StateGraph:
