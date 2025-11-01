@@ -4,7 +4,8 @@ from neo4j import GraphDatabase
 from lxml import etree
 from pathlib import Path
 from typing import List, TypedDict, Generator, Optional, Any
-
+import pandas as pd
+import re
 import global_vars
 # --- 1. NEO4J CONNECTION DETAILS ---
 NEO4J_URI = global_vars.NEO4J_URI
@@ -24,40 +25,161 @@ class Neo4jConnector:
             result = session.run(query, parameters)
             return [record for record in result]
 
-    @staticmethod
-    def format_results_to_text(records: List[Any]) -> str:
-        """Converts the raw Neo4j query results into a clean string for the LLM."""
+    def format_results_to_text(self, records: List[Any]) -> str:
+        """
+        [POC VERSION] Converts raw Neo4j query results into a clean string.
+        This version is designed for a Proof of Concept and will output the
+        FULL time-series data for OutputComponent nodes.
+        
+        WARNING: This can generate very large outputs for long simulations and may
+        exceed LLM token limits. Use with small datasets for initial testing.
+        """
         if not records:
             return "No information found in the knowledge graph for the specified component."
 
         lines = []
         for record in records:
-            node = record.get("n")
+            node = record.get("n", record.get("oc"))
             neighbor = record.get("neighbor")
             relationship = record.get("r")
 
-            if node and 'name' in node:
-                lines.append(f"Component '{node['name']}' (Type: {list(node.labels)[0]}):")
-                lines.append(f"  - Properties: {dict(node)}")
-            
+            if node:
+                # --- POC CHANGE: Output FULL data for OutputComponent nodes ---
+                if "OutputComponent" in node.labels:
+                    component_name = node.get('component', 'N/A')
+                    lines.append(f"Output Component '{component_name}' (Type: OutputComponent):")
+                    
+                    time_vals = node.get('time_values', [])
+                    output_vals = node.get('output_values', [])
+                    
+                    if time_vals and output_vals:
+                        # Directly embed the full lists as strings into the context
+                        lines.append(f"  - Number of Data Points: {len(time_vals)}")
+                        lines.append(f"  - Time Values: {str(time_vals)}")
+                        lines.append(f"  - Output Values: {str(output_vals)}")
+                    else:
+                        lines.append("  - No time series data found.")
+
+                # --- Existing logic for other nodes (unchanged) ---
+                elif 'name' in node:
+                    node_type = next(iter(node.labels - {'Node'}), "Component")
+                    lines.append(f"Component '{node['name']}' (Type: {node_type}):")
+                    properties_to_print = {k: v for k, v in dict(node).items() if not isinstance(v, list)}
+                    lines.append(f"  - Properties: {properties_to_print}")
+
             if neighbor and relationship:
-                neighbor_name = neighbor.get('name', 'Unnamed Component')
-                lines.append(f"  - Is connected via '{relationship.type}' to '{neighbor_name}' (Type: {list(neighbor.labels)[0]})")
-        
+                neighbor_name = neighbor.get('name', neighbor.get('component', 'Unnamed Component'))
+                neighbor_type = next(iter(neighbor.labels - {'Node'}), "Component")
+                lines.append(f"  - Is connected via '{relationship.type}' to '{neighbor_name}' (Type: {neighbor_type})")
+
         # Remove duplicates while preserving order
-        unique_lines = []
-        for line in lines:
-            if line not in unique_lines:
-                unique_lines.append(line)
-        
+        unique_lines = list(dict.fromkeys(lines))
         return "\n".join(unique_lines)
-    
+    def get_full_context_for_output(self, request_name: str) -> str:
+        """
+        [MARKER AWARE VERSION]
+        Performs a multi-hop query that respects the central role of Reference_Markers
+        to gather a complete "dossier" for root cause analysis.
+        """
+        
+        # This single, powerful query follows the true causal chain via marker IDs.
+        cypher_query = """
+        // 1. Find the PostRequest of interest by its name
+        MATCH (pr:PostRequest {name: $request_name})
+
+        // 2. Get its numerical output data (The Symptom)
+        OPTIONAL MATCH (pr)-[:HAS_COMPONENT]->(output:OutputComponent)
+
+        // 3. Find the Body that is being measured by tracing through the PostRequest's i_marker_id property
+        // This is the key step that follows the marker logic.
+        WITH pr, collect(DISTINCT output) as symptom_data
+        MATCH (body_of_interest:Body)<-[:HAS_MARKER]-(marker:Reference_Marker {ms_id: pr.measures_marker})
+
+        // 4. Now that we have the Body, find ALL joints connected to it.
+        // A joint is connected if it references ANY marker on that body.
+        WITH pr, body_of_interest, symptom_data
+        MATCH (body_of_interest)<-[:HAS_MARKER]-(any_marker_on_body:Reference_Marker)
+        MATCH (joint:Joint)
+        WHERE joint.i_marker_id = any_marker_on_body.ms_id OR joint.j_marker_id = any_marker_on_body.ms_id
+
+        // 5. Find any motions applied to THOSE joints (The Potential Cause)
+        OPTIONAL MATCH (motion:Motion)-[:APPLIED_TO]->(joint)
+
+        // Return all pieces of the puzzle for the dossier
+        RETURN pr,
+            body_of_interest,
+            symptom_data,
+            collect(DISTINCT joint) as connected_joints,
+            collect(DISTINCT motion) as joint_drivers
+        """
+        
+        # Before this query can work, your graph schema needs a small but vital change.
+        # The original ingestion script did not create :Reference_Marker nodes or the
+        # [:HAS_MARKER] relationship. Let's add a temporary helper here to show how to fix it.
+        # NOTE: This should ideally be in your main_neo4j_importer.py script!
+        
+        # --- TEMPORARY SCHEMA FIX (for this to work) ---
+        # You MUST update your main_neo4j_importer.py to include this logic.
+        # I'm adding a check here to make it runnable for you.
+        with self.driver.session() as session:
+            check = session.run("MATCH (m:Reference_Marker) RETURN count(m) as count").single()
+            if not check or check['count'] == 0:
+                print("\n!!! WARNING: :Reference_Marker nodes not found. Your ingestion script needs an update.")
+                print("This query will fail. Please update main_neo4j_importer.py with the Marker creation logic.\n")
+                return "ERROR: Graph schema is missing critical :Reference_Marker nodes. Please update the ingestion script."
+        # --- END SCHEMA FIX NOTE ---
+
+        with self.driver.session() as session:
+            result = session.run(cypher_query, request_name=request_name).single()
+
+            if not result or not result["body_of_interest"]:
+                return f"No complete causal chain found for PostRequest '{request_name}'."
+            
+            # Assemble the dossier from the rich query result
+            pr_node = result["pr"]
+            body_node = result["body_of_interest"]
+            symptom_nodes = result["symptom_data"]
+            joint_nodes = result["connected_joints"]
+            driver_nodes = result["joint_drivers"]
+            
+            pr_context = self.format_results_to_text([{'n': pr_node}])
+            body_context = self.format_results_to_text([{'n': body_node}])
+            symptom_context = self.format_results_to_text([{'n': node} for node in symptom_nodes])
+            joint_context = self.format_results_to_text([{'n': node} for node in joint_nodes])
+            driver_context = self.format_results_to_text([{'n': node} for node in driver_nodes])
+
+            full_dossier = f"""
+            ---
+            **Investigation Dossier for '{request_name}'**
+            ---
+            **0. ANALYSIS CONTEXT: The Output Request**
+            {pr_context}
+            ---
+            **1. SYMPTOM: Numerical Output Data**
+            {symptom_context if symptom_nodes else "No numerical output data found."}
+            ---
+            **2. PRIMARY COMPONENT: Measured Body**
+            This is the body exhibiting the behavior, identified via its marker.
+            {body_context}
+            ---
+            **3. STRUCTURAL PATH: Connected Joints**
+            These joints are connected to the Measured Body via one of its markers.
+            {joint_context if joint_nodes else "No joints found connected to this body."}
+            ---
+            **4. POTENTIAL DRIVERS: Motions/Forces on Joints**
+            These motions control the behavior of the connected joints. The root cause is likely an expression here.
+            {driver_context if driver_nodes else "No motions found applied to the connected joints."}
+            ---
+            """
+            return full_dossier
 class Neo4jUploader:
     """
     Handles the connection to Neo4j and the uploading of graph data.
     """
     def __init__(self, uri, user, password):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.force_comps = ['FX', 'FY', 'FZ', 'TX', 'TY', 'TZ', 'FM', 'TM']
+        self.disp_comps = ['DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
 
     def close(self):
         self.driver.close()
@@ -147,6 +269,27 @@ class Neo4jUploader:
                     """, ms_id=body_props['ms_id'], props=body_props)
             print(f"  + Processed {len(bodies)} Body nodes.")
 
+            # --- NEW & ESSENTIAL: Create Reference_Marker Nodes ---
+            markers = root.findall('.//Model/Reference_Marker')
+            for marker in markers:
+                marker_props = {
+                    'ms_id': marker.get('id'),
+                    'name': marker.get('label'),
+                }
+                body_id = marker.get('body_id')
+
+                session.run("""
+                    // Create the marker itself
+                    MERGE (m:Reference_Marker:Node {ms_id: $ms_id})
+                    SET m += $props
+                    
+                    // Find its parent body and create the relationship
+                    WITH m
+                    MATCH (b:Body {ms_id: $body_id})
+                    MERGE (b)<-[:HAS_MARKER]-(m)
+                    """, ms_id=marker_props['ms_id'], props=marker_props, body_id=body_id)
+            print(f"  + Processed {len(markers)} Reference_Marker nodes and their connections to Bodies.")
+
             # Helper dict to map markers to bodies
             marker_to_body = {m.get('id'): m.get('body_id') for m in root.findall('.//Model/Reference_Marker')}
 
@@ -218,7 +361,7 @@ class Neo4jUploader:
                     'relative_to_marker': req.get('j_marker_id'),
                     'in_frame_of_marker': req.get('ref_marker_id')
                 }
-                # ***** FIX APPLIED HERE *****
+                
                 session.run("""
                     MERGE (pr:PostRequest:Node {ms_id: $ms_id})
                     SET pr += $props
@@ -246,9 +389,87 @@ class Neo4jUploader:
                         MATCH (b:Body {ms_id: $body_id})
                         MERGE (pr)-[:IN_FRAME_OF]->(b)
                         """, req_id=req.get('id'), body_id=body_ref)
+                
             print(f"  + Processed {len(requests)} PostRequest nodes and their connections.")
             print("--- Import Finished ---")
 
+    def upload_simulation_results(self, results_directory: Path):
+        """
+        Scans for PostRequest nodes, finds corresponding CSVs in the given
+        directory, and uploads all components in a single batch per file.
+        """
+        print(f"\n--- Starting Batched Multi-Component Results Import ---")
+        
+        # First, get a list of all PostRequest nodes from the graph
+        query_requests = "MATCH (pr:PostRequest) RETURN pr.name AS name, pr.ms_id AS ms_id"
+        
+        with self.driver.session() as session:
+            request_nodes = session.run(query_requests)
+            
+            for record in request_nodes:
+                request_name = record['name']
+                request_id = record['ms_id']
+                print(f"\n-> Checking results for PostRequest: '{request_name}'")
+
+                # Construct the expected CSV filename
+                results_file = results_directory / (request_name + ".csv")
+                
+                if not results_file.exists():
+                    print(f"  - No results file found at '{results_file.name}'. Skipping.")
+                    continue
+
+                try:
+                    df = pd.read_csv(results_file)
+                    if 'Time' not in df.columns:
+                        print(f"  - ERROR: 'Time' column not found in '{results_file.name}'. Skipping.")
+                        continue
+                    time_vector = df['Time'].tolist()
+                except Exception as e:
+                    print(f"  - ERROR: Could not read or parse CSV '{results_file.name}': {e}. Skipping.")
+                    continue
+
+                # Prepare a list of data maps, one for each component to be uploaded.
+                components_batch = []
+                all_known_components = self.force_comps + self.disp_comps
+
+                for column_name in all_known_components:
+                    if column_name not in df.columns:
+                        continue  # Skip if this component is not in the results file
+
+                    output_vector = df[column_name].tolist()
+                    component_type = f'rotational {column_name}' if column_name in ['RX', 'RY', 'RZ', 'YAW', 'PITCH', 'ROLL', 'MX', 'MY', 'MZ'] else f'translational {column_name}'
+
+                    # Add all necessary info for this component to our batch list
+                    components_batch.append({
+                        'req_id': request_id,
+                        'comp_name': column_name,
+                        'comp_type': component_type,
+                        'time_data': time_vector,
+                        'output_data': output_vector
+                    })
+                
+                # <<< REFINEMENT 4: EFFICIENT BATCH UPLOAD with UNWIND >>>
+                # If we found components, upload them all in one go for this file.
+                if components_batch:
+                    print(f"  - Found {len(components_batch)} components. Uploading as a single batch...")
+                    
+                    # This single query iterates over our list and creates/updates all nodes/relationships
+                    session.run("""
+                        UNWIND $batch AS component_data
+                        MATCH (pr:PostRequest {ms_id: component_data.req_id})
+                        MERGE (oc:OutputComponent {parent_id: pr.ms_id, component: component_data.comp_name})
+                        SET oc.type = component_data.comp_type,
+                            oc.time_values = component_data.time_data,
+                            oc.output_values = component_data.output_data
+                        MERGE (pr)-[:HAS_COMPONENT]->(oc)
+                        """,
+                        batch=components_batch
+                    )
+                    print(f"  - Successfully uploaded batch for '{request_name}'.")
+                else:
+                    print(f"  - No known components found in '{results_file.name}'.")
+
+        print("--- Multi-Component Results Import Finished ---")
 
 if __name__ == "__main__":
     # Same as before...
@@ -256,7 +477,9 @@ if __name__ == "__main__":
     data_dir = script_dir / ".."/"../" / "Pdata"
 
     XML_FILE = data_dir / "pairs_model.xml" 
+    RESULTS_FILE = data_dir / "mrf_disp_export.csv"
     
+
     if not XML_FILE.exists():
         print(f"Error: XML file not found at {XML_FILE}")
         print("Please make sure the file exists and the path is correct.")
@@ -265,6 +488,7 @@ if __name__ == "__main__":
         uploader.clear_database()
         uploader.create_constraints()
         uploader.upload_graph_from_xml(XML_FILE)
+        uploader.upload_simulation_results(data_dir)
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")
         print("You can now explore the graph in the Neo4j Browser.")
