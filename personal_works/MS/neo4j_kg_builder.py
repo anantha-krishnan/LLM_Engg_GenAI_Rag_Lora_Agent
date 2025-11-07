@@ -251,6 +251,27 @@ class Neo4jUploader:
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.force_comps = ['FX', 'FY', 'FZ', 'TX', 'TY', 'TZ', 'FM', 'TM']
         self.disp_comps = ['DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
+        self.reqsub_cols=['f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']
+        self.rad_omegaact_omega = {'f2':'rolling radius',
+                                   'f3':'omega',
+                                   'f4':'omega free'}
+        self.slip_inc = {'f2': 'longitudinal slip',
+                         'f3': 'lateral slip angle',
+                         'f4': 'inclination angle'}
+        self.cp_forces = {'f2':'longitudinal force',
+                          'f3':'lateral force',
+                          'f4':'vertical force',
+                          'f6':'residual overturning moment',
+                          'f7':'rolling resistance moment',
+                          'f8':'aligning moment'}
+        self.cp_locations = {'f2':'road contact point x location',
+                             'f3':'road contact point y location',
+                             'f4':'road contact point z location',
+                             'f6': 'tire radial penetration into the road surface'}
+        self.pr={'Radius OmegaActual OmegaFree':self.rad_omegaact_omega,
+                 'LonSlip LatSlip IncAngle (W-Axis system)':self.slip_inc,
+                 'Tire CP Forces (W-Axis system)':self.cp_forces,
+                 'Contact Patch Locations':self.cp_locations}
 
     def close(self):
         self.driver.close()
@@ -306,17 +327,37 @@ class Neo4jUploader:
 
         with self.driver.session() as session:
             print(f"\n--- Starting Import for {xml_file_path.split('/')[-1]} ---")
-
+            # --- Find the Param_Transient Command ---
+            param_transient_command = root.find('.//Command/Param_Transient')
+            if param_transient_command is not None:                  
+                transient_props = {
+                    'integrator_type': param_transient_command.get('integrator_type'),
+                    'integr_tol': float(param_transient_command.get('integr_tol', 0.0)),
+                    'h_max': float(param_transient_command.get('h_max', 0.0)),
+                    'h0_max': float(param_transient_command.get('h0_max', 0.0)),
+                    'h_min': float(param_transient_command.get('h_min', 0.0)),
+                    'max_order': int(param_transient_command.get('max_order', 0)),
+                    'vel_tol_factor': float(param_transient_command.get('vel_tol_factor', 0.0)),
+                    'dae_constr_tol': float(param_transient_command.get('dae_constr_tol', 0.0)),
+                    'dae_corrector_maxit': int(param_transient_command.get('dae_corrector_maxit', 0)),
+                    'dae_corrector_minit': int(param_transient_command.get('dae_corrector_minit', 0)),
+                    'dae_index': int(param_transient_command.get('dae_index', 0)),
+                    'dae_vel_ctrl': param_transient_command.get('dae_vel_ctrl', 'FALSE') == 'TRUE'  
+                }
             # --- 1. Find the Simulation Command ---
             sim_command = root.find('.//Command/Simulate')
             if sim_command is not None:
                 sim_props = {
                     'type': sim_command.get('analysis_type'),
+                    'name': 'Model Solver Settings',
                     'end_time': float(sim_command.get('end_time')),
                     'source_file': xml_file_path.split('/')[-1]
                 }
+                if param_transient_command is not None:        
+                    sim_props.update(transient_props)
+
                 session.run("""
-                    MERGE (s:Simulation:Node {ms_id: 'Simulation_Run'})
+                    MERGE (s:Simulation:Node {ms_id: 'Simulation_Settings'})
                     SET s += $props
                     """, props=sim_props)
                 print("  + Created Simulation node.")
@@ -421,7 +462,129 @@ class Neo4jUploader:
                         """, motion_id=motion.get('id'), joint_id=target_joint_id)
             print(f"  + Processed {len(motions)} Motion nodes and their connections.")
 
-            # --- 5: Extract Output Requests with Full Context ---
+            # --- Read Force_Vector_TwoBody with dependencies ---            
+            force_vector_twobody_items = root.findall('.//Model/Force_Vector_TwoBody')
+            tire_system_nodes = {}
+            for force_element in force_vector_twobody_items:
+                param_string = force_element.get('usrsub_param_string', '')
+                match = re.search(r'USER\(\d+,\s*(\d+),', param_string)
+                if not match:
+                    continue # Skip if the format is unexpected
+                
+                system_id = match.group(1)
+                if system_id not in tire_system_nodes:
+                    tire_system_props = {
+                        'ms_id': system_id,
+                        'name': f'AutoTireSystem_{system_id}',
+                    }
+                # Find the associated TPF and RDF files using the unique string labels from the XML
+                tpf_element = root.find('.//Model/Reference_String[@label="tire property file string"]')
+                rdf_element = root.find('.//Model/Reference_String[@label="road property file string"]')
+                if tpf_element is not None:
+                    tire_system_props['tire_file_path'] = tpf_element.get('string')
+                if rdf_element is not None:
+                    tire_system_props['road_file_path'] = rdf_element.get('string')
+                    
+                    tire_system_nodes[system_id] = tire_system_props
+
+                # Create the AutoTireSystem node
+                session.run("""
+                    MERGE (ats:AutoTireSystem:Node {ms_id: $ms_id})
+                    SET ats += $props
+                """, ms_id=system_id, props=tire_system_props)
+
+                # Create the Force node and link it to the AutoTireSystem
+                fvtb_props = {
+                    'ms_id': force_element.get('id'),
+                    'name': force_element.get('label')+f"_{force_element.get('id')}",
+                    'type': force_element.get('type'),
+                    'i_marker_id': force_element.get('i_marker_id'),
+                    'j_floating_marker_id': force_element.get('j_floating_marker_id'),
+                    'ref_marker_id': force_element.get('ref_marker_id'),
+                }
+                session.run("""
+                    MERGE (f:Force:Node {ms_id: $ms_id})
+                    SET f += $props
+                    // Link it to the parent AutoTireSystem
+                    WITH f
+                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
+                    MERGE (ats)-[:APPLIES_FORCE_VIA]->(f)
+                """, ms_id=fvtb_props.get('ms_id'), props=fvtb_props, ats_id=system_id)
+
+                # Link the Force to the bodies it acts upon
+                body_i_id = marker_to_body.get(fvtb_props.get('i_marker_id'))
+                body_j_id = marker_to_body.get(fvtb_props.get('j_floating_marker_id'))
+                ref_body_id = marker_to_body.get(fvtb_props.get('ref_marker_id'))
+                if body_i_id:
+                    session.run("""
+                        MATCH (f:Force {ms_id: $force_id})
+                        MATCH (b:Body {ms_id: $body_id})
+                        MERGE (f)-[:APPLIES_FORCE_TO]->(b)
+                        """, force_id=fvtb_props.get('ms_id'), body_id=body_i_id)
+                if ref_body_id:
+                    session.run("""
+                        MATCH (f:Force {ms_id: $force_id})
+                        MATCH (b:Body {ms_id: $body_id})
+                        MERGE (f)-[:IN_FRAME_OF]->(b)
+                        """, force_id=fvtb_props.get('ms_id'), body_id=ref_body_id)
+            
+            # --- Create the StateEquation node and link it to the AutoTireSystem
+            state_eqns = root.findall('.//Model/Control_StateEqn')
+            for se in state_eqns:
+                param_string = se.get('usrsub_param_string', '')
+                # get the second USER(...) parameter which is the AutoTireSystem ID
+                match = re.search(r'USER\(\d+,\s*(\d+),', param_string)
+                if not match:
+                    continue
+                system_id = match.group(1)
+                se_props = {
+                    'ms_id': se.get('id'),
+                    'name': f"State Equation for Tire {system_id}",
+                    'type': se.get('type'),
+                    'usrsub_param_string': se.get('usrsub_param_string'),
+                    'u_solver_array_id': se.get('u_solver_array_id')
+                }
+                session.run("""
+                    MERGE (cse:StateEquation:Node {ms_id: $ms_id})
+                    SET cse += $props
+                    // Link it to the parent AutoTireSystem
+                    WITH cse
+                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
+                    MERGE (ats)-[:GOVERNED_BY]->(cse)
+                """, ms_id=se_props.get('ms_id'), props=se_props, ats_id=system_id)
+                # --- 8. Process State Variables and link them to the State Equation ---
+                input_array_id = se_props['u_solver_array_id']
+                input_array_element = root.find(f'.//Model/Reference_Array[@id="{input_array_id}"]')
+                if input_array_element is not None:
+                    var_ids = input_array_element.text.strip().split()
+                    for var_id in var_ids:
+                        var_element = root.find(f'.//Model/Reference_Variable[@id="{var_id}"]')
+                        if var_element is not None:
+                            var_props = {
+                                'ms_id': var_element.get('id'),
+                                'name': var_element.get('label'),
+                                'type': var_element.get('type'),                                
+                            }
+                            if var_props['type'] == 'EXPRESSION':
+                                var_props['expr'] = var_element.get('expr')
+                            elif var_props['type'] == 'USERSUB':
+                                var_props['usrsub_param_string'] = var_element.get('usrsub_param_string')
+                                # TO DO: create connections to bodies based on usersub_param_string variables
+
+                            session.run("""
+                                // Create the variable
+                                MERGE (sv:StateVariable:Node {ms_id: $ms_id})
+                                SET sv += $props
+                                
+                                // Link it to the state equation that uses it
+                                WITH sv
+                                MATCH (c:StateEquation {ms_id: $eqn_id})
+                                MERGE (c)-[:USES_INPUT]->(sv)
+                                """, ms_id=var_id, props=var_props, eqn_id=se_props['ms_id'])
+
+                        # --- 5: Extract Output Requests with Full Context ---
+            
+            
             requests = root.findall('.//Model/Post_Request')
             for req in requests:
                 req_props = {
@@ -437,30 +600,38 @@ class Neo4jUploader:
                     MERGE (pr:PostRequest:Node {ms_id: $ms_id})
                     SET pr += $props
                     """, ms_id=req_props['ms_id'], props=req_props)
+                if req.get('type') == 'USERSUB':
+                    # use regex to extract the third param usersub_param_string. It is in the format USER(x, y, z,...)
+                    req_props['measures_autotire'] = re.findall(r'USER\((.*?)\)', req.get('usrsub_param_string'))[0].split(',')[2].strip()
+                    session.run("""
+                        MATCH (pr:PostRequest {ms_id: $ms_id})
+                        MATCH (ats:AutoTireSystem {ms_id: $req_id})
+                        MERGE (pr)-[:MEASURES_AUTOTIRE]->(ats)
+                    """, ms_id=req_props['ms_id'], req_id=req_props['measures_autotire'])
+                else:
+                    body_i = marker_to_body.get(req.get('i_marker_id'))
+                    body_j = marker_to_body.get(req.get('j_marker_id'))
+                    body_ref = marker_to_body.get(req.get('ref_marker_id'))
 
-                body_i = marker_to_body.get(req.get('i_marker_id'))
-                body_j = marker_to_body.get(req.get('j_marker_id'))
-                body_ref = marker_to_body.get(req.get('ref_marker_id'))
-
-                if body_i:
-                    session.run("""
-                        MATCH (pr:PostRequest {ms_id: $req_id})
-                        MATCH (b:Body {ms_id: $body_id})
-                        MERGE (pr)-[:MEASURES {type: $req_type}]->(b)
-                        """, req_id=req.get('id'), body_id=body_i, req_type=req.get('type'))
-                if body_j:
-                    session.run("""
-                        MATCH (pr:PostRequest {ms_id: $req_id})
-                        MATCH (b:Body {ms_id: $body_id})
-                        MERGE (pr)-[:RELATIVE_TO]->(b)
-                        """, req_id=req.get('id'), body_id=body_j)
-                if body_ref:
-                    session.run("""
-                        MATCH (pr:PostRequest {ms_id: $req_id})
-                        MATCH (b:Body {ms_id: $body_id})
-                        MERGE (pr)-[:IN_FRAME_OF]->(b)
-                        """, req_id=req.get('id'), body_id=body_ref)
-                
+                    if body_i:
+                        session.run("""
+                            MATCH (pr:PostRequest {ms_id: $req_id})
+                            MATCH (b:Body {ms_id: $body_id})
+                            MERGE (pr)-[:MEASURES {type: $req_type}]->(b)
+                            """, req_id=req.get('id'), body_id=body_i, req_type=req.get('type'))
+                    if body_j:
+                        session.run("""
+                            MATCH (pr:PostRequest {ms_id: $req_id})
+                            MATCH (b:Body {ms_id: $body_id})
+                            MERGE (pr)-[:RELATIVE_TO]->(b)
+                            """, req_id=req.get('id'), body_id=body_j)
+                    if body_ref:
+                        session.run("""
+                            MATCH (pr:PostRequest {ms_id: $req_id})
+                            MATCH (b:Body {ms_id: $body_id})
+                            MERGE (pr)-[:IN_FRAME_OF]->(b)
+                            """, req_id=req.get('id'), body_id=body_ref)
+    
             print(f"  + Processed {len(requests)} PostRequest nodes and their connections.")
             print("--- Import Finished ---")
 
@@ -503,22 +674,48 @@ class Neo4jUploader:
                 components_batch = []
                 all_known_components = self.force_comps + self.disp_comps
 
-                for column_name in all_known_components:
-                    if column_name not in df.columns:
-                        continue  # Skip if this component is not in the results file
-
-                    output_vector = df[column_name].tolist()
-                    component_type = f'rotational {column_name}' if column_name in ['RX', 'RY', 'RZ', 'YAW', 'PITCH', 'ROLL', 'MX', 'MY', 'MZ'] else f'translational {column_name}'
-
-                    # Add all necessary info for this component to our batch list
-                    components_batch.append({
-                        'req_id': request_id,
-                        'comp_name': column_name,
-                        'comp_type': component_type,
-                        'time_data': time_vector,
-                        'output_data': output_vector
-                    })
                 
+                # --- REFINEMENT 3: HANDLE GENERAL CASES WHERE RESULTS ARE NAMED as in self.reqsub_cols ---
+                # check all the keys in self.pr to see if any of them are substrings of request_name
+                sub_key = None
+                for key in self.pr.keys():
+                    if key in request_name:
+                        sub_key = key
+                        break
+
+                if sub_key:
+                    for column_name, col_val in self.pr[sub_key].items():
+                            if column_name not in df.columns:
+                                continue  # Skip if this component is not in the results file
+
+                            output_vector = df[column_name].tolist()
+                            component_type = col_val
+
+                            components_batch.append({
+                                'req_id': request_id,
+                                'comp_name': component_type,
+                                'comp_type': column_name,
+                                'time_data': time_vector,
+                                'output_data': output_vector
+                            })
+                else:
+                        for column_name in all_known_components:
+                            if column_name not in df.columns:
+                                continue  # Skip if this component is not in the results file
+
+                            output_vector = df[column_name].tolist()
+                            
+                            component_type = f'rotational {column_name}' if column_name in ['RX', 'RY', 'RZ', 'YAW', 'PITCH', 'ROLL', 'MX', 'MY', 'MZ'] else f'translational {column_name}'
+
+                            # Add all necessary info for this component to our batch list
+                            components_batch.append({
+                                'req_id': request_id,
+                                'comp_name': column_name,
+                                'comp_type': component_type,
+                                'time_data': time_vector,
+                                'output_data': output_vector
+                            })
+                        
                 # <<< REFINEMENT 4: EFFICIENT BATCH UPLOAD with UNWIND >>>
                 # If we found components, upload them all in one go for this file.
                 if components_batch:
@@ -587,15 +784,36 @@ class Neo4jUploader:
             result = session.run(query)
             summary = result.consume()
             print(f"  + Created/Updated {summary.counters.relationships_created} [:INFLUENCES] relationships with path context.")
-            
+
+    def create_tire_force_summary(self):
+        """
+        Creates high-level "shortcut" relationships for Tire Forces.
+        """
+        with self.driver.session() as session:
+            print("\n--- Creating Tire Force Summary Relationships ---")
+
+            query = """
+            MATCH (ats:AutoTireSystem)-[:APPLIES_FORCE_VIA]->(force:Force)-[:APPLIES_FORCE_TO]->(body:Body)
+            MATCH (pr:PostRequest)-[:MEASURES_AUTOTIRE]->(ats)
+            MATCH (ats)-[:GOVERNED_BY]->(se:StateEquation)
+            WITH ats, pr, se, force, body
+            // Create the summary relationship
+            MERGE (ats)-[r:INFLUENCES]->(pr)
+            SET r.reason = "The effects of the Force/Moment from AutoTireSystem is measured by this PostRequest.",
+                r.governed_by_state_equation = se.ms_id,
+                r.tire_force_id= force.ms_id,
+                r.applies_to_body_id = body.ms_id
+            """
+            result = session.run(query)
+            summary = result.consume()
+            print(f"  + Created/Updated {summary.counters.relationships_created} [:APPLIES_TIRE_FORCE_TO] relationships.")
 if __name__ == "__main__":
     # Same as before...
     script_dir = Path(__file__).parent
     data_dir = script_dir / ".."/"../" / "Pdata"
+    data_dir_sub = data_dir / "TestRig"
+    XML_FILE = data_dir_sub / "SingleTire_Run.xml"
 
-    XML_FILE = data_dir / "pairs_model.xml" 
-    RESULTS_FILE = data_dir / "mrf_disp_export.csv"
-    
 
     if not XML_FILE.exists():
         print(f"Error: XML file not found at {XML_FILE}")
@@ -605,8 +823,9 @@ if __name__ == "__main__":
         uploader.clear_database()
         uploader.create_constraints()
         uploader.upload_graph_from_xml(XML_FILE)
-        uploader.upload_simulation_results(data_dir)
+        uploader.upload_simulation_results(data_dir_sub)
         uploader.create_summary_relationships() 
+        uploader.create_tire_force_summary()
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")
         print("You can now explore the graph in the Neo4j Browser.")

@@ -341,7 +341,8 @@ class QAAnalystAgent:
         node_data.pop('_labels', None)  # Clean up the data dict
         if not node_type:
             return ""
-
+        if node_type.lower() == "postrequest" and node_data.get("measurement").lower() == 'usersub':
+            node_type='pr_usersub'
         term_to_lookup = node_type.lower()
         
         # The predefined map of high-frequency terms to specific URLs
@@ -351,6 +352,10 @@ class QAAnalystAgent:
             "joint": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_41.htm",
             "body": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_35.htm",
             "postrequest": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/xml-format_83.htm",
+            "pr_usersub": "https://help.altair.com/hwdesktop/hwx/topics/motionview/coordinate_systems_and_output_request_r.htm",
+            "autotiresystem": "https://help.altair.com/hwdesktop/hwx/topics/motionview/fiala_tire_force_calculation_r.htm",
+            "stateequation": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/gsesub_gsexx_gsexu_gseyx_gseyu.htm",
+            "force": "https://help.altair.com/hwsolvers/ms/topics/solvers/ms/gfosub.htm"
             # Add more mappings as needed
         }
 
