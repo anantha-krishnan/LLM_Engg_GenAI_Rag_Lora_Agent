@@ -36,6 +36,69 @@ class Neo4jConnector:
             result = session.run("MATCH (n {name: $name}) RETURN n LIMIT 1", name=entity_name)
             return result.single() is not None
         
+    def get_all_nodes_with_primary_type(self) -> list[dict]:
+        """
+        Retrieves a list of all nodes, returning each node's name and its primary type.
+        The primary type is the first label that is not 'Node'.
+
+        Returns:
+            A list of dictionaries, e.g., [{'name': 'Body_1', 'type': 'Body'}]
+        """
+        with self.driver.session() as session:
+            query = """
+            MATCH (n)
+            WHERE n.name IS NOT NULL
+            RETURN 
+                n.name AS name, 
+                [label IN labels(n) WHERE label <> 'Node'][0] AS type
+            ORDER BY type, name
+            """
+            result = session.run(query)            
+            return [{"name": record["name"], "type": record["type"]} for record in result]
+
+    def get_graph_schema(self) -> str:
+        """
+        Retrieves the schema of the graph, showing node labels and their relationships.
+        This is useful for understanding the overall structure of the data.
+        """
+        print("\n--- CONNECTOR: Getting graph schema ---")
+        try:
+            # This is a powerful built-in procedure in Neo4j 5.x+
+            query = "CALL db.schema.visualization()"
+            
+            with self.driver.session() as session:
+                result = session.run(query)
+                # result is a list of records, we expect one
+                data = result.single()
+                if not data:
+                    return "Could not retrieve schema. The database might be empty or the procedure failed."
+
+                nodes = data.get("nodes", [])
+                relationships = data.get("relationships", [])
+
+                schema_lines = ["--- Knowledge Graph Schema ---"]
+                
+                schema_lines.append("\n**Node Types (Labels):**")
+                for node in nodes:
+                    # In Neo4j 5, labels is a list within the node object
+                    primary_label = next((label for label in node['labels'] if label != 'Node'), "Unknown")
+                    schema_lines.append(f"- {primary_label}")
+
+                schema_lines.append("\n**Relationship Types:**")
+                for rel in relationships:
+                    # The result is a path-like object
+                    start_node_label = next((label for label in rel.start['labels'] if label != 'Node'), "Unknown")
+                    end_node_label = next((label for label in rel.end['labels'] if label != 'Node'), "Unknown")
+                    rel_type = rel.type
+                    schema_lines.append(f"- ({start_node_label})-[:{rel_type}]->({end_node_label})")
+                
+                formatted_schema = "\n".join(schema_lines)
+                print(formatted_schema)
+                return formatted_schema
+        except Exception as e:
+            print(f"Error getting schema: {e}")
+            return "An error occurred while fetching the graph schema. It may not be supported by your Neo4j version."
+            
     def query(self, query: str, parameters: Optional[dict] = None) -> List[Any]:
         """Runs a query and returns the results."""
         with self.driver.session() as session:
@@ -63,7 +126,7 @@ class Neo4jConnector:
             if node:
                 # --- POC CHANGE: Output FULL data for OutputComponent nodes ---
                 if "OutputComponent" in node.labels:
-                    component_name = node.get('component', 'N/A')
+                    component_name = node.get('name', 'N/A')
                     lines.append(f"Output Component '{component_name}':")
                     
                     time_vals = node.get('time_values', [])
@@ -243,12 +306,12 @@ class Neo4jUploader:
         self.force_comps = ['FX', 'FY', 'FZ', 'TX', 'TY', 'TZ', 'FM', 'TM']
         self.disp_comps = ['DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
         self.reqsub_cols=['f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']
-        self.rad_omegaact_omega = {'f2':'rolling radius',
-                                   'f3':'omega',
-                                   'f4':'omega free'}
-        self.slip_inc = {'f2': 'longitudinal slip',
-                         'f3': 'lateral slip angle',
-                         'f4': 'inclination angle'}
+        self.rad_omegaact_omega = {'f2':'Radius',
+                                   'f3':'OmegaActual',
+                                   'f4':'OmegaFree'}
+        self.slip_inc = {'f2': 'lon slip',
+                         'f3': 'lat angle',
+                         'f4': 'inc angle'}
         self.cp_forces = {'f2':'longitudinal force',
                           'f3':'lateral force',
                           'f4':'vertical force',
@@ -718,7 +781,7 @@ class Neo4jUploader:
                     session.run("""
                         UNWIND $batch AS component_data
                         MATCH (pr:PostRequest {ms_id: component_data.req_id})
-                        MERGE (oc:OutputComponent {parent_id: pr.ms_id, component: component_data.comp_name})
+                        MERGE (oc:OutputComponent {parent_id: pr.ms_id, name: component_data.comp_name})
                         SET oc.type = component_data.comp_type,
                             oc.time_values = component_data.time_data,
                             oc.output_values = component_data.output_data
@@ -808,6 +871,7 @@ class Neo4jUploader:
             result = session.run(query)
             summary = result.consume()
             print(f"  + Created/Updated {summary.counters.relationships_created} [:APPLIES_TIRE_FORCE_TO] relationships.")
+  
 if __name__ == "__main__":
     script_dir = Path(__file__).parent
     data_dir = script_dir / ".."/"../" / "Pdata"
@@ -825,6 +889,10 @@ if __name__ == "__main__":
         uploader.upload_graph_from_xml(XML_FILE)
         uploader.upload_simulation_results(data_dir_sub)
         uploader.create_summary_relationships() 
+        connector = Neo4jConnector(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+
+        all_nodes_with_types = connector.get_dossier_for_any_entity('OmegaActual')
+        all_nodes_with_types = connector.get_all_nodes_with_primary_type()
         # uploader.create_tire_force_summary()
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")

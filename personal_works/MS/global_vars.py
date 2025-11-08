@@ -1,8 +1,8 @@
 import os
 #import vertexai
 #from vertexai.preview.vision_models import ImageGenerationModel, Image
-from IPython.display import Image as IPythonImage
-import anthropic
+# from IPython.display import Image as IPythonImage
+# import anthropic
 from dotenv import load_dotenv
 from pathlib import Path
 

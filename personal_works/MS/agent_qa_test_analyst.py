@@ -102,7 +102,7 @@ class QAAnalystAgent:
         contextualize_q_system_prompt = """Given a chat history and the latest user question which might reference context
           in the chat history, formulate a standalone question which can be understood 
           without the chat history. Do NOT answer the question, just reformulate it if needed
-          and otherwise return it as is."""
+          and otherwise return it as is. Carefully consider if the user is referring to any particular item in the chat history. Pick the names of those entities."""
         contextualize_q_prompt = ChatPromptTemplate.from_messages([("system", contextualize_q_system_prompt), MessagesPlaceholder(variable_name="chat_history"), ("human", "{question}")])
         history_retriever = contextualize_q_prompt | self.llm | StrOutputParser()
         retrieved_context = history_retriever.invoke({"chat_history": chat_history, "question": question})
@@ -301,8 +301,9 @@ class QAAnalystAgent:
         - **Explain the relationship** between different components.
         - **Trace a causal chain** that links multiple components together.
 
-        Carefully read all parts of the provided dossier. Your answer must be a cohesive analysis that integrates information from the different sections to form a complete picture. 
-        Be precise and refer to components by their names as listed in the dossier.
+        **Crucially, pay attention to the `(Details: ...)` text on the `INFLUENCES` relationships if available.** This text explains the causal path. Use all the entries along with its specific explanation based on the Altair's help manual to construct a step-by-step explanation for your answer.
+
+        Start by defining the key components, then trace the influence from the source (like a Motion or StateVariable) through the intermediate components (like Joints and Bodies) to the final point of query requested by user.
         """
         
         kg_prompt = ChatPromptTemplate.from_messages([

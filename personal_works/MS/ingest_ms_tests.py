@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
-from langchain.docstore.document import Document
-from langchain.retrievers import BM25Retriever, EnsembleRetriever
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 
 DB_DIR = (Path(__file__).parent / "chroma_db_qa_analyst").as_posix()
 
