@@ -1,4 +1,4 @@
-# main_neo4j_importer.py (Corrected)
+# Neo4j Knowledge Graph Builder for MotionSolve XML Data
 
 from neo4j import GraphDatabase
 from lxml import etree
@@ -77,7 +77,7 @@ class Neo4jConnector:
                     else:
                         lines.append("  - No time series data found.")
 
-                # --- Existing logic for other nodes (unchanged) ---
+                # --- logic for other nodes ---
                 elif 'name' in node:
                     node_type = next(iter(node.labels - {'Node'}), "Component")
                     lines.append(f"Component '{node['name']}' (Type: {node_type}):")
@@ -129,22 +129,14 @@ class Neo4jConnector:
             collect(DISTINCT joint) as connected_joints,
             collect(DISTINCT motion) as joint_drivers
         """
-        
-        # Before this query can work, your graph schema needs a small but vital change.
-        # The original ingestion script did not create :Reference_Marker nodes or the
-        # [:HAS_MARKER] relationship. Let's add a temporary helper here to show how to fix it.
-        # NOTE: This should ideally be in your main_neo4j_importer.py script!
-        
         # --- TEMPORARY SCHEMA FIX (for this to work) ---
-        # You MUST update your main_neo4j_importer.py to include this logic.
-        # I'm adding a check here to make it runnable for you.
         with self.driver.session() as session:
             check = session.run("MATCH (m:Reference_Marker) RETURN count(m) as count").single()
             if not check or check['count'] == 0:
                 print("\n!!! WARNING: :Reference_Marker nodes not found. Your ingestion script needs an update.")
                 print("This query will fail. Please update main_neo4j_importer.py with the Marker creation logic.\n")
                 return "ERROR: Graph schema is missing critical :Reference_Marker nodes. Please update the ingestion script."
-        # --- END SCHEMA FIX NOTE ---
+        # --- END SCHEMA FIX ---
 
         with self.driver.session() as session:
             result = session.run(cypher_query, request_name=request_name).single()
@@ -189,20 +181,16 @@ class Neo4jConnector:
             ---
             """
             return full_dossier
-    # In your Neo4jConnector class in neo4j_kg_builder.py or similar
 
     def get_dossier_for_any_entity(self, entity_name: str) -> str:
         """
         Generates a context-rich "dossier" for ANY given entity by name.
         It uses a single, generic query that leverages the enriched graph model
-        (e.g., the [:INFLUENCES] relationships) to find all relevant context.
+        to find all relevant context, INCLUDING RELATIONSHIP PROPERTIES.
         """
-        # This one query now works for ALL entity types!
         cypher_query = """
         MATCH (n {name: $name})
-        // Get direct neighbors (for structure)
         OPTIONAL MATCH (n)-[r]-(neighbor)
-        // Get numerical data if it exists
         OPTIONAL MATCH (n)-[:HAS_COMPONENT]->(output:OutputComponent)
         RETURN n, 
             collect(DISTINCT {rel: r, end_node: neighbor}) as neighbors,
@@ -214,18 +202,15 @@ class Neo4jConnector:
             if not result or not result["n"]:
                 return f"--- Dossier for '{entity_name}' ---\nEntity not found in the knowledge graph."
 
-            # We now have to format the result manually, but the logic is simple.
             node_data = result["n"]
             neighbor_data = result["neighbors"]
             output_data = result["outputs"]
 
-            # Use our standard formatter for the primary node and its outputs
             dossier_parts = [
                 self.format_results_to_text([{'n': node_data}]),
                 self.format_results_to_text([{'n': out} for out in output_data])
             ]
             
-            # Manually format the neighbors to be clean
             neighbor_lines = ["\n--- Connections & Influences ---"]
             if not neighbor_data:
                 neighbor_lines.append("No direct connections found.")
@@ -233,12 +218,18 @@ class Neo4jConnector:
                 for item in neighbor_data:
                     rel = item['rel']
                     end_node = item['end_node']
-                    if rel and end_node: # Filter out nulls from OPTIONAL MATCH
-                        neighbor_lines.append(f"- Is connected via '{rel.type}' to '{end_node.get('name', 'Unnamed')}' (Type: {list(end_node.labels)[0]})")
+                    if rel and end_node:
+                        rel_properties = dict(rel.items()) # Get properties as a dictionary
+                        
+                        # Format the relationship with its properties included.
+                        line = f"- Is connected via '{rel.type}' to '{end_node.get('name', 'Unnamed')}' (Type: {list(end_node.labels)[0]})"
+                        if rel_properties:
+                            line += f" (Details: {rel_properties})" # Append the properties
+                        
+                        neighbor_lines.append(line)
 
             dossier_parts.append("\n".join(neighbor_lines))
             
-            # Combine and filter out empty strings
             full_dossier = "\n".join(filter(None, dossier_parts))
             
             return f"--- Dossier for '{entity_name}' ---\n{full_dossier}"
@@ -309,8 +300,7 @@ class Neo4jUploader:
                 print("  - No old generic constraint on :Node(ms_id) found to drop.")
             
             labels = ["Simulation", "Body", "Joint", "Motion", "PostRequest"]
-            for label in labels:
-                # Note the syntax change in the CREATE CONSTRAINT command
+            for label in labels:                
                 query = f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.ms_id IS UNIQUE"
                 session.run(query)
                 print(f"  - Ensured constraint exists for :{label}")
@@ -381,7 +371,7 @@ class Neo4jUploader:
                     """, ms_id=body_props['ms_id'], props=body_props)
             print(f"  + Processed {len(bodies)} Body nodes.")
 
-            # --- NEW & ESSENTIAL: Create Reference_Marker Nodes ---
+            # --- Create Reference_Marker Nodes ---
             markers = root.findall('.//Model/Reference_Marker')
             for marker in markers:
                 marker_props = {
@@ -415,7 +405,6 @@ class Neo4jUploader:
                     'i_marker_id': joint.get('i_marker_id'),
                     'j_marker_id': joint.get('j_marker_id')
                 }
-                # ***** FIX APPLIED HERE *****
                 session.run("""
                     MERGE (j:Joint:Node {ms_id: $ms_id})
                     SET j += $props
@@ -448,7 +437,6 @@ class Neo4jUploader:
                 }
                 target_joint_id = motion.get('joint_id')
 
-                # ***** FIX APPLIED HERE *****
                 session.run("""
                     MERGE (m:Motion:Node {ms_id: $ms_id})
                     SET m += $props
@@ -569,7 +557,6 @@ class Neo4jUploader:
                                 var_props['expr'] = var_element.get('expr')
                             elif var_props['type'] == 'USERSUB':
                                 var_props['usrsub_param_string'] = var_element.get('usrsub_param_string')
-                                # TO DO: create connections to bodies based on usersub_param_string variables
 
                             session.run("""
                                 // Create the variable
@@ -581,10 +568,16 @@ class Neo4jUploader:
                                 MATCH (c:StateEquation {ms_id: $eqn_id})
                                 MERGE (c)-[:USES_INPUT]->(sv)
                                 """, ms_id=var_id, props=var_props, eqn_id=se_props['ms_id'])
-
-                        # --- 5: Extract Output Requests with Full Context ---
-            
-            
+                                
+                            if var_props['type'] == 'USERSUB':
+                                marker_ids_in_expr = re.findall(r',(\d{8,})', var_props['usrsub_param_string'])
+                                for marker_id in marker_ids_in_expr:
+                                    session.run("""
+                                        MATCH (sv:StateVariable {ms_id: $var_id})
+                                        MATCH (m:Reference_Marker {ms_id: $marker_id})
+                                        MERGE (sv)-[:MEASURES_KINEMATICS_OF]->(m)
+                                    """, var_id=var_id, marker_id=marker_id)
+            # --- 5: Extract Output Requests with Full Context ---
             requests = root.findall('.//Model/Post_Request')
             for req in requests:
                 req_props = {
@@ -738,52 +731,60 @@ class Neo4jUploader:
                     print(f"  - No known components found in '{results_file.name}'.")
 
         print("--- Multi-Component Results Import Finished ---")
-    # In your Neo4jUploader class in main_neo4j_importer.py
 
     def create_summary_relationships(self):
         """
         Creates high-level "shortcut" relationships like [:INFLUENCES]
-        and ENRICHES them with properties describing the path.
+        for both Motion-driven and Tire-driven systems, enriching them
+        with properties describing the causal path.
         """
         with self.driver.session() as session:
             print("\n--- Creating Enriched Summary Relationships for Analysis ---")
 
-            # This query now captures the joint's name and adds it as a property to the new relationship.
-            query = """
-            // Find all the valid paths from a motion to a body
-            MATCH (motion:Motion)-[:APPLIED_TO]->(joint:Joint)
-            MATCH (body:Body)<-[:HAS_MARKER]-(marker:Reference_Marker)
-            WHERE joint.i_marker_id = marker.ms_id OR joint.j_marker_id = marker.ms_id
-
-            // Use the WITH clause to pass the path information along
-            WITH motion, joint, body
-
-            // Find the PostRequests that measure that body
-            MATCH (pr:PostRequest)
-            WHERE pr.measures_marker IN [(body)<-[:HAS_MARKER]-(m) | m.ms_id]
-
-            // --- AGGREGATION STEP ---
-            // Group by the start (motion) and end (pr) nodes of our desired relationship.
-            // For each group, collect all the intermediate components into unique lists.
+            # --- Query 1: For standard Motion -> Joint -> Body -> PostRequest paths (Unchanged) ---
+            motion_query = """
+            MATCH (motion:Motion)-[:APPLIED_TO]->(joint:Joint)-[:CONNECTS_TO*1..2]->(body:Body)
+            MATCH (pr:PostRequest)-[:MEASURES]->(body)
             WITH motion, pr,
                 collect(DISTINCT joint.name) as via_joint_names,
-                collect(DISTINCT joint.ms_id) as via_joint_ids,
-                collect(DISTINCT body.name) as on_body_names,
-                collect(DISTINCT body.ms_id) as on_body_ids
-
-            // --- FINAL MERGE STEP ---
-            // Now that we have the complete picture for each (motion, pr) pair,
-            // create the single relationship and set its properties using the aggregated lists.
+                collect(DISTINCT body.name) as on_body_names
             MERGE (motion)-[r:INFLUENCES]->(pr)
             SET r.via_joint_names = via_joint_names,
                 r.on_body_names = on_body_names,
-                r.via_joint_ids = via_joint_ids,
-                r.on_body_ids = on_body_ids,
                 r.reason = "Motion influences this PostRequest via the listed joints and bodies."
             """
-            result = session.run(query)
-            summary = result.consume()
-            print(f"  + Created/Updated {summary.counters.relationships_created} [:INFLUENCES] relationships with path context.")
+            result_motion = session.run(motion_query).consume()
+            print(f"  + Created/Updated {result_motion.counters.relationships_created} Motion-driven [:INFLUENCES] relationships.")
+
+            # --- Query 2: <<< ENHANCED FOR TIRE SYSTEM PATH DETAILS >>> ---
+            tire_query = """
+            // 1. Start from the input StateVariable and find its full chain
+            MATCH (sv:StateVariable)-[:USES_INPUT]->(se:StateEquation)<-[:GOVERNED_BY]-(ats:AutoTireSystem)
+            MATCH (ats)-[:APPLIES_FORCE_VIA]->(force:Force)
+            
+            // 2. Find the PostRequests that are influenced by this Tire System
+            MATCH (ats)-[:INFLUENCES]->(pr:PostRequest)
+
+            // 3. Find the body being measured by the State Variable
+            MATCH (sv)-[:MEASURES_KINEMATICS_OF]->(:Reference_Marker)-[:HAS_MARKER]->(body:Body)
+
+            // 4. Group by the start and end points (sv, pr) and collect path details
+            WITH sv, pr,
+                collect(DISTINCT body.name) as measured_bodies,
+                collect(DISTINCT se.name) as via_state_equations,
+                collect(DISTINCT ats.name) as via_tire_systems,
+                collect(DISTINCT force.name) as resulting_in_forces
+
+            // 5. Create the enriched INFLUENCES relationship
+            MERGE (sv)-[r:INFLUENCES]->(pr)
+            SET r.reason = "This kinematic variable is an input to a tire state equation. The resulting tire force influences this post-request output.",
+                r.measured_bodies = measured_bodies,
+                r.via_state_equations = via_state_equations,
+                r.via_tire_systems = via_tire_systems,
+                r.resulting_in_forces = resulting_in_forces
+            """
+            result_tire = session.run(tire_query).consume()
+            print(f"  + Created/Updated {result_tire.counters.relationships_created} Tire input-driven [:INFLUENCES] relationships with full path details.")
 
     def create_tire_force_summary(self):
         """
@@ -808,7 +809,6 @@ class Neo4jUploader:
             summary = result.consume()
             print(f"  + Created/Updated {summary.counters.relationships_created} [:APPLIES_TIRE_FORCE_TO] relationships.")
 if __name__ == "__main__":
-    # Same as before...
     script_dir = Path(__file__).parent
     data_dir = script_dir / ".."/"../" / "Pdata"
     data_dir_sub = data_dir / "TestRig"
@@ -825,7 +825,7 @@ if __name__ == "__main__":
         uploader.upload_graph_from_xml(XML_FILE)
         uploader.upload_simulation_results(data_dir_sub)
         uploader.create_summary_relationships() 
-        uploader.create_tire_force_summary()
+        # uploader.create_tire_force_summary()
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")
         print("You can now explore the graph in the Neo4j Browser.")
