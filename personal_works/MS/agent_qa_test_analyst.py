@@ -794,10 +794,24 @@ class QAAnalystAgent:
             "question": message,
             "chat_history": chat_history
             }
+        last_log_len = 0
+        final_answer_started = False
+
         # The stream method on a compiled graph yields the state updates from each node.
         # We need to filter for the updates from our 'generate' node to get the tokens.
         for update in self.qa_graph.stream(input):
+            if "reasoning_log" in update[list(update.keys())[0]]:
+                current_log = update[list(update.keys())[0]]["reasoning_log"]
+                if len(current_log) > last_log_len:
+                    new_entry = current_log[-1]
+                    yield f"STATUS: {new_entry}\n" # Yield a special token your UI can parse
+                    last_log_len = len(current_log)
+                    
             if "generate_answer" in update:
+                if not final_answer_started:
+                    yield "FINAL_ANSWER_START\n" # A token for the UI
+                final_answer_started = True
+
                 yield update["generate_answer"]["answer"]
         
         # yield f"Processed message: {message}"
