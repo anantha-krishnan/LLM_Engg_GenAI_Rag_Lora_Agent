@@ -2,8 +2,11 @@
 import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
 from pathlib import Path
-from agent_qa_test_analyst import qa_analyst_agent  # Import the QA analyst agent instance
+from agent_qa_test_analyst import QAAnalystAgent  # Import the QA analyst agent instance
+#from crew_analyst_agent import CrewAIAnalystAgent
 import global_vars
+
+qa_analyst_agent = QAAnalystAgent()
 
 def respond(message, chat_history):
     """
@@ -20,7 +23,8 @@ def respond(message, chat_history):
 
     # The agent's invoke method now returns a stream
     for chunk in qa_analyst_agent.process_message(message, lc_history):
-        chat_history[-1][1] += chunk  # Update the last AI response
+        chat_history[-1][1] += chunk  # Update the last AI response: for langraph agent
+        #chat_history[-1][1] = chunk  # Update the last AI response: for crewai agent
         yield chat_history  # Stream the updated chat history
 
 def add_user_message(message, chat_history):
@@ -51,3 +55,7 @@ def build_manual_ui():
 if __name__ == "__main__":
     qa_analyst_agent.save_graph(global_vars.data_dir / "model_analyst_langgraph.png")
     build_manual_ui()
+
+# the output 'Body 1-left(Output 0)' reduces gradually. why is it so?    
+# is my "vertical force" from "AutoTire - Tire CP Forces (W-Axis system)" not converging? 
+# can you explain the Force type entities in the model

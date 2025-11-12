@@ -10,12 +10,11 @@ from neo4j_kg_builder import Neo4jConnector
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.schema.output_parser import StrOutputParser
-from langchain_core.output_parsers import JsonOutputParser
-from langchain.docstore.document import Document
-from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+# from langchain_core.schema.runnable import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser,JsonOutputParser
+from langchain_core.documents import Document
+from pydantic.v1 import BaseModel, Field
 from langchain_community.document_loaders import WebBaseLoader
 
 from langgraph.graph import StateGraph, END
@@ -26,40 +25,105 @@ METADATA_CSV = (Path(__file__).parent / "MS_Tests_Metadata.csv").as_posix()
 LLM_MODEL_NAME = global_vars.model_openai_4omini
 
 class GraphState(TypedDict):
-    # Original fields
-    route_decision: str
+    # Core fields
     question: str
-    standalone_question: str # Replaces retrieved_context for holding the question
+    standalone_question: str
     chat_history: Optional[List[BaseMessage]]
-    documents: List[Document]
-    message: List[BaseMessage]
+    message: List[BaseMessage] # For final prompt
     answer: str
-    knowledge_graph: Optional[Any]
-    kg_context: str
 
-    # --- ANALYSIS LOOP ---
-    entities_to_query: Optional[List[str]]
-    queried_entities: set
-    judge_decision: str
+    # --- Investigation Loop State ---
+    # A list of entity names to investigate next.
+    investigation_queue: List[str]
+    # A set of entities we have already created dossiers for.
+    investigated_entities: set
+    # The complete context gathered from all dossiers.
+    accumulated_context: str
+    # A human-readable log of the agent's reasoning steps.
+    reasoning_log: List[str]
 
 class DossierReviewOutput(BaseModel):
     next_entities: List[str] = Field(..., description="A list of NEW component names that require their own detailed dossier. Should be an empty list if the current dossier is sufficient.")
+# Place this class within your agent_qa_test_analyst.py file
+from thefuzz import process
 
+class ToolBelt:
+    """A collection of tools the analyst agent can use to investigate the KG."""
+    def __init__(self, connector: Neo4jConnector):
+        self.neo4j_connector = connector
+
+    def find_matching_node_names(self, query_string: str) -> str:
+        """
+        Executes a fuzzy search for node names against the KG to find the
+        most likely starting points for an investigation.
+        """
+        print(f"\n--- TOOL: find_matching_node_names ---")
+        all_nodes = self.neo4j_connector.get_all_nodes_with_primary_type()
+        if not all_nodes:
+            return "The Knowledge Graph is empty. No components to search."
+
+        node_name_to_type = {node['name']: node['type'] for node in all_nodes}
+        all_node_names = list(node_name_to_type.keys())
+
+        # Use fuzzy matching to find potential candidates
+        matches = process.extractBests(query_string, all_node_names, score_cutoff=70, limit=5)
+
+        if not matches:
+            return (f"No components found matching '{query_string}'. "
+                   f"Try rephrasing or use get_graph_schema to see all component types.")
+
+        formatted_matches = [
+            f"- '{name}' (Type: {node_name_to_type[name]})" for name, score in matches
+        ]
+        result_string = "Found potential component matches:\n" + "\n".join(formatted_matches)
+        print(result_string)
+        return result_string
+
+    def get_enriched_dossier(self, entity_name: str, qa_agent_instance) -> str:
+        """
+        Retrieves a complete, enriched dossier for a single entity, including
+        its graph connections and an explanation from official documentation.
+        This is the primary tool for gathering deep context.
+        """
+        print(f"\n--- TOOL: get_enriched_dossier for '{entity_name}' ---")
+        if not self.neo4j_connector.entity_exists(entity_name):
+            return f"Error: The component '{entity_name}' does not exist in the Knowledge Graph."
+
+        # 1. Get the structural information from the KG
+        graph_dossier = self.neo4j_connector.get_dossier_for_any_entity(entity_name)
+
+        # 2. Get the raw properties for the documentation lookup
+        raw_node_data = self.neo4j_connector.get_node_properties(entity_name)
+
+        # 3. Call the agent's "auto-researcher" to get the docs explanation
+        # We pass the agent instance to access its _get_documentation_explanation method
+        doc_explanation = qa_agent_instance._get_documentation_explanation(raw_node_data)
+
+        # 4. Combine into a single block
+        return graph_dossier + "\n" + doc_explanation
+
+    def get_graph_schema(self) -> str:
+        """Returns the high-level schema of the knowledge graph."""
+        print(f"\n--- TOOL: get_graph_schema ---")
+        return self.neo4j_connector.get_graph_schema()
+    
 class QAAnalystAgent:
     def __init__(self):
         vs = factory_create_vector_store(
             metadata_csv_path=METADATA_CSV,
             vector_store_type="chroma"
         )
+        self.neo4j_connector = Neo4jConnector(
+            global_vars.NEO4J_URI, global_vars.NEO4J_USER, global_vars.NEO4J_PASSWORD
+        )
+        self.tools = ToolBelt(self.neo4j_connector)
         self.retriever = factory_get_hybrid_retriever(vs, alpha=0.5, top_k=500)
         self.llm = ChatOpenAI(
             model_name=LLM_MODEL_NAME,
             temperature=0.3,
             streaming=True,
         )
-        self.neo4j_connector = Neo4jConnector(
-            global_vars.NEO4J_URI, global_vars.NEO4J_USER, global_vars.NEO4J_PASSWORD
-        )
+        
         self.qa_graph = self._create_graph()
     
     def close(self):
@@ -68,7 +132,181 @@ class QAAnalystAgent:
     # ===================================================================
     # SECTION 1: ROUTING AND BRANCHES
     # ===================================================================
+    # In QAAnalystAgent class in agent_qa_test_analyst.py
 
+    # ===================================================================
+    # SECTION: KG INVESTIGATIVE ANALYSIS BRANCH
+    # ===================================================================
+
+    def identify_entities(self, state: GraphState) -> dict:
+        """
+        Node 1: Identify initial entities from the question to start the investigation.
+        """
+        print("\n---NODE: IDENTIFY ENTITIES---")
+        question = state["standalone_question"]
+        
+        # Use a tool to find potential matches
+        potential_matches_str = self.tools.find_matching_node_names(question)
+
+        # Use an LLM to decide which of the matches are the best starting points
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert CAE analyst. Your task is to select the most relevant starting components for an investigation based on a user's question and a list of potential matches from a knowledge graph.
+
+            Respond with a JSON object containing a single key "entities" with a list of the chosen entity names. The list should be empty if no matches are relevant.
+            """),
+            ("user", "User Question: \"{question}\"\n\nPotential Matches:\n{matches}")
+        ])
+        
+        entity_extractor = prompt | self.llm | JsonOutputParser()
+        
+        extracted = entity_extractor.invoke({
+            "question": question,
+            "matches": potential_matches_str
+        })
+        
+        entities = extracted.get("entities", [])
+        print(f"---INFO: Extracted entities to investigate: {entities}---")
+        
+        if not entities:
+            # This becomes a terminal state
+            return {"message": "I could not identify a specific component in your question to analyze. Could you please clarify which part of the model you are interested in, for example 'the hub body' or 'vertical force'?"}
+
+        return {
+            "investigation_queue": entities,
+            "investigated_entities": set(),
+            "accumulated_context": "",
+            "reasoning_log": [f"Starting investigation based on the query: '{question}'"]
+        }
+
+    def gather_dossier(self, state: GraphState) -> dict:
+        """
+        Node 2: Gathers a detailed, enriched dossier for the next entity in the queue.
+        """
+        print("\n---NODE: GATHER DOSSIER---")
+        queue = state["investigation_queue"]
+        investigated = state["investigated_entities"]
+        
+        # Get the next entity to investigate
+        entity_to_investigate = queue.pop(0)
+        
+        log = state["reasoning_log"]
+        log.append(f"Investigating '{entity_to_investigate}'...")
+        
+        # Use the tool to get the full dossier
+        dossier = self.tools.get_enriched_dossier(entity_to_investigate, self)
+        
+        # Update the state
+        investigated.add(entity_to_investigate)
+        updated_context = state["accumulated_context"] + "\n\n" + dossier
+        
+        return {
+            "investigation_queue": queue,
+            "investigated_entities": investigated,
+            "accumulated_context": updated_context.strip(),
+            "reasoning_log": log
+        }
+        
+    def analyze_and_decide(self, state: GraphState) -> dict:
+        """
+        Node 3 (The Critic): Reviews all gathered context and decides if the investigation
+        is complete or if new, un-investigated entities need to be added to the queue.
+        """
+        print("\n---NODE: ANALYZE AND DECIDE (CRITIC)---")
+        question = state["standalone_question"]
+        context = state["accumulated_context"]
+        investigated = state["investigated_entities"]
+        log = state["reasoning_log"]
+
+        critic_prompt_template = """You are a supervisor AI for a CAE analysis task. Your job is to review an investigation dossier and determine the next step.
+        The goal is to gather all necessary information to answer the user's original question.
+
+        **User's Original Question:**
+        {question}
+
+        **Entities Already Investigated:**
+        {investigated_list}
+
+        **Current Investigation Dossier:**
+        {context}
+
+        **Your Task:**
+        1. Read the dossier. Identify any components mentioned in the 'Connections & Influences' sections that are critical to the causal chain but have NOT been investigated yet.
+        2. Decide on the next action.
+
+        **Output Format:**
+        Respond with a single JSON object with two keys:
+        - "decision": A brief justification for your choice.
+        - "next_entities": A list of NEW component names that require their own detailed dossier.
+        - **If the current dossier is sufficient to answer the question, you MUST return an empty list for "next_entities".**
+        """
+        
+        critic_prompt = ChatPromptTemplate.from_template(critic_prompt_template)
+        critic_chain = critic_prompt | self.llm | JsonOutputParser()
+
+        response = critic_chain.invoke({
+            "question": question,
+            "context": context,
+            "investigated_list": str(list(investigated))
+        })
+        
+        decision_log = response.get("decision", "No decision made.")
+        new_entities = response.get("next_entities", [])
+        
+        log.append(f"Critic's Decision: {decision_log}")
+        print(f"---INFO: Critic's Decision: {decision_log}---")
+        
+        # Filter out entities we've already seen to prevent cycles
+        truly_new_entities = [entity for entity in new_entities if entity not in investigated]
+        
+        if truly_new_entities:
+            print(f"---INFO: Critic requested deep-dive on: {truly_new_entities}---")
+            log.append(f"Adding {truly_new_entities} to the investigation queue.")
+            # Add new entities to the front of the queue to prioritize them
+            updated_queue = truly_new_entities + state["investigation_queue"]
+            return {"investigation_queue": updated_queue, "reasoning_log": log}
+        else:
+            print("---INFO: Critic determined investigation is complete.---")
+            log.append("Investigation complete. Proceeding to final answer synthesis.")
+            return {"investigation_queue": [], "reasoning_log": log} # Empty queue signals loop termination
+            
+    def prepare_final_synthesis(self, state: GraphState) -> dict:
+        """
+        Node 4: Prepares the final prompt for the LLM to synthesize an answer.
+        """
+        print("\n---NODE: PREPARE FINAL SYNTHESIS---")
+        question = state["standalone_question"]
+        context = state["accumulated_context"]
+        log = "\n- ".join(state["reasoning_log"])
+
+        synthesis_prompt_str = """You are an expert Altair MotionSolve analyst. You have been provided with a complete investigation dossier and a log of the reasoning process used to build it.
+        Your task is to synthesize all of this information into a comprehensive, step-by-step answer to the user's original question.
+
+        **CRITICAL INSTRUCTIONS:**
+        1.  **Follow the Causal Chain:** Use the `[:INFLUENCES]` relationships and the reasoning log as your guide. Start from the root cause (e.g., a Motion, a StateVariable) and trace the path to the symptom the user asked about.
+        2.  **Define Components:** Use the "Official Documentation Explanation" sections within the dossier to first define what each key component is and what its properties mean.
+        3.  **Synthesize, Don't Just List:** Do not just regurgitate the dossier. Weave the information together into a coherent narrative that explains *how* and *why* the system behaves the way it does.
+        4.  **Conclude with a Recommendation:** End your analysis with a clear starting point for troubleshooting, as requested by the user.
+
+        **Reasoning Log (How this dossier was built):**
+        - {log}
+
+        **Full Investigation Dossier:**
+        {context}
+
+        ---
+        **User's Question:** {question}
+
+        **Your Expert Analysis:**
+        """
+        
+        final_prompt = ChatPromptTemplate.from_template(synthesis_prompt_str)
+        messages = final_prompt.invoke({
+            "log": log,
+            "context": context,
+            "question": question
+        })
+        return {"message": messages.to_messages()}
+    
     def route_question(self, state: GraphState) -> str:
         """ Route the question to the appropriate processing path. """
         print("\n---NODE: ROUTING QUESTION---")
@@ -125,7 +363,9 @@ class QAAnalystAgent:
         qa_prompt = ChatPromptTemplate.from_messages([("system", qa_sys_prompt), ("user", "Context:\n{context}\n\nQuestion: {question}")])
         messages = qa_prompt.invoke({"context": context, "question": question})
         return {"message": messages.to_messages()}
-
+    
+    def _get_entities_from_question(self, question: str) -> List[str]:
+        return self.neo4j_connector.find_matching_node_names(question)
     # ===================================================================
     # SECTION 3: KG STRUCTURAL BRANCH NODES
     # ===================================================================
@@ -136,7 +376,7 @@ class QAAnalystAgent:
         question = state["standalone_question"]
         entities = re.findall(r"'([^']*)'|\"([^\"]*)\"", question)
         entities = [name for tpl in entities for name in tpl if name]
-
+        trial = self.neo4j_connector.find_matching_node_names(question)
         if not entities:
             context = "The user's question did not specify a component name. Please ask them to specify a component, e.g., 'Describe \"Ground Body\"'."
             return {"kg_context": context}
@@ -342,7 +582,7 @@ class QAAnalystAgent:
         node_data.pop('_labels', None)  # Clean up the data dict
         if not node_type:
             return ""
-        if node_type.lower() == "postrequest" and node_data.get("measurement").lower() == 'usersub':
+        if (node_type.lower() == "postrequest" and node_data.get("measurement").lower() == 'usersub') or node_type.lower() == "outputcomponent":
             node_type='pr_usersub'
         term_to_lookup = node_type.lower()
         
@@ -400,67 +640,51 @@ class QAAnalystAgent:
             return ""
     # In your QAAnalystAgent class, this is the FINAL _create_graph
 
+    # In QAAnalystAgent class, replace the _create_graph method
+
     def _create_graph(self) -> StateGraph:
         workflow = StateGraph(GraphState)
 
-        # --- Add All Nodes ---
+        # --- Add Nodes ---
         workflow.add_node("history_aware_retrieval", self._history_aware_retrieval)
-        workflow.add_node("route_question", self.route_question)
-        workflow.add_node("retrieve", self._retrieve_documents)
-        workflow.add_node("prepare_rag_generation", self._prepare_rag_for_generation)
-        workflow.add_node("query_kg_for_structure", self._query_kg_for_structure)
-        workflow.add_node("prepare_kg_structure_generation", self._prepare_kg_structure_for_generation)
-        
-        # --- The Hybrid Analysis Branch Nodes ---
-        workflow.add_node("run_holistic_analysis_query", self._run_holistic_analysis_query)
-        workflow.add_node("judge_dossier_completeness", self.judge_dossier_completeness)
-        workflow.add_node("query_for_more_context", self._query_for_more_context)
-        workflow.add_node("prepare_final_analysis", self._prepare_final_analysis_for_generation)
-        
-        workflow.add_node("generate_answer", self._generate_final_answer)
+        workflow.add_node("identify_entities", self.identify_entities)
+        workflow.add_node("gather_dossier", self.gather_dossier)
+        workflow.add_node("analyze_and_decide", self.analyze_and_decide)
+        workflow.add_node("prepare_final_synthesis", self.prepare_final_synthesis)
+        workflow.add_node("generate_answer", self._generate_final_answer) # This can be reused
 
-        # --- Define the Graph's Flow ---
+        # --- Define Edges ---
         workflow.set_entry_point("history_aware_retrieval")
-        workflow.add_edge("history_aware_retrieval", "route_question")
+        workflow.add_edge("history_aware_retrieval", "identify_entities")
 
-        workflow.add_conditional_edges("route_question", lambda state: state["route_decision"], {
-            "rag_branch": "retrieve",
-            "kg_structural_branch": "query_kg_for_structure",
-            "kg_analysis_branch": "run_holistic_analysis_query",
-        })
-        
-        # RAG & Structural Branches (linear)
-        workflow.add_edge("retrieve", "prepare_rag_generation")
-        workflow.add_edge("prepare_rag_generation", "generate_answer")
-        workflow.add_edge("query_kg_for_structure", "prepare_kg_structure_generation")
-        workflow.add_edge("prepare_kg_structure_generation", "generate_answer")
-
-        # --- The HYBRID Analysis Branch ---
-        # After the initial dossier, the judge reviews it
-        workflow.add_edge("run_holistic_analysis_query", "judge_dossier_completeness")
-        
-        # The judge's decision point (controlled by code)
+        # After identifying entities, we decide whether to start the loop or stop
         workflow.add_conditional_edges(
-            "judge_dossier_completeness",
-            # If the judge found new entities to deep-dive on, re-query.
-            # Otherwise, the dossier is complete, so generate the answer.
-            lambda state: "re-query" if state.get("entities_to_query") else "generate",
+            "identify_entities",
+            lambda state: "continue" if state.get("investigation_queue") else "stop",
             {
-                "re-query": "query_for_more_context",
-                "generate": "prepare_final_analysis",
+                "continue": "gather_dossier",
+                # If no entities were found, generate the clarification message
+                "stop": "generate_answer" 
+            }
+        )
+
+        # The core investigation loop
+        workflow.add_edge("gather_dossier", "analyze_and_decide")
+        workflow.add_conditional_edges(
+            "analyze_and_decide",
+            # If the critic adds to the queue, loop back. Otherwise, exit the loop.
+            lambda state: "continue_investigation" if state.get("investigation_queue") else "synthesis",
+            {
+                "continue_investigation": "gather_dossier",
+                "synthesis": "prepare_final_synthesis"
             }
         )
         
-        # The deep-dive loop: after getting more context, go back to the judge for another review
-        workflow.add_edge("query_for_more_context", "judge_dossier_completeness")
-        
-        # The exit path from the loop
-        workflow.add_edge("prepare_final_analysis", "generate_answer")
+        # Final answer generation
+        workflow.add_edge("prepare_final_synthesis", "generate_answer")
         workflow.add_edge("generate_answer", END)
 
         return workflow.compile()
-    # In your QAAnalystAgent class in agent_qa_test_analyst.py
-
     def _run_holistic_analysis_query(self, state: GraphState) -> dict:
         """
         Runs the initial dossier query for all entities in the question and

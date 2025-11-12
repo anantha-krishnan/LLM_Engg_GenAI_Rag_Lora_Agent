@@ -281,7 +281,7 @@ class Neo4jConnector:
                 for item in neighbor_data:
                     rel = item['rel']
                     end_node = item['end_node']
-                    if rel and end_node:
+                    if rel!=None and end_node!=None:
                         rel_properties = dict(rel.items()) # Get properties as a dictionary
                         
                         # Format the relationship with its properties included.
