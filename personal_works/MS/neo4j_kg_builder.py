@@ -35,7 +35,30 @@ class Neo4jConnector:
         with self.driver.session() as session:
             result = session.run("MATCH (n {name: $name}) RETURN n LIMIT 1", name=entity_name)
             return result.single() is not None
-        
+    def get_nodes_by_type(self, node_type: str) -> list[dict]:
+        """
+        Retrieves all nodes of a given type (label) from the graph.
+
+        Args:
+            node_type (str): The label/type of the nodes to retrieve.
+
+        Returns:
+            A list of dictionaries, each representing a node's properties.
+        """
+        with self.driver.session() as session:
+            query = f"""
+            MATCH (n:{node_type})
+            RETURN n
+            ORDER BY n.name
+            """
+            result = session.run(query)
+            nodes = []
+            for record in result:
+                node = record["n"]
+                node_data = dict(node)
+                node_data['_labels'] = list(node.labels)
+                nodes.append(node_data)
+            return nodes
     def get_all_nodes_with_primary_type(self) -> list[dict]:
         """
         Retrieves a list of all nodes, returning each node's name and its primary type.
@@ -59,45 +82,46 @@ class Neo4jConnector:
     def get_graph_schema(self) -> str:
         """
         Retrieves the schema of the graph, showing node labels and their relationships.
-        This is useful for understanding the overall structure of the data.
+        This version correctly handles the neo4j.graph.Node and Relationship objects.
         """
         print("\n--- CONNECTOR: Getting graph schema ---")
         try:
-            # This is a powerful built-in procedure in Neo4j 5.x+
             query = "CALL db.schema.visualization()"
             
             with self.driver.session() as session:
-                result = session.run(query)
-                # result is a list of records, we expect one
-                data = result.single()
-                if not data:
+                result = session.run(query).single()
+                if not result:
                     return "Could not retrieve schema. The database might be empty or the procedure failed."
 
-                nodes = data.get("nodes", [])
-                relationships = data.get("relationships", [])
+                nodes = result.get("nodes", [])
+                relationships = result.get("relationships", [])
 
                 schema_lines = ["--- Knowledge Graph Schema ---"]
                 
                 schema_lines.append("\n**Node Types (Labels):**")
-                for node in nodes:
-                    # In Neo4j 5, labels is a list within the node object
-                    primary_label = next((label for label in node['labels'] if label != 'Node'), "Unknown")
+                for node_obj in nodes:
+                    # <<< FIX 1 & 2: Correctly handle the frozenset and filter 'Node' >>>
+                    primary_label = next((label for label in node_obj.labels if label != 'Node'), "Component")
                     schema_lines.append(f"- {primary_label}")
 
                 schema_lines.append("\n**Relationship Types:**")
-                for rel in relationships:
-                    # The result is a path-like object
-                    start_node_label = next((label for label in rel.start['labels'] if label != 'Node'), "Unknown")
-                    end_node_label = next((label for label in rel.end['labels'] if label != 'Node'), "Unknown")
-                    rel_type = rel.type
-                    schema_lines.append(f"- ({start_node_label})-[:{rel_type}]->({end_node_label})")
+                for rel_obj in relationships:
+                    # The result is a Relationship object with .start_node, .end_node, and .type
+                    start_node_labels = rel_obj.start_node.labels
+                    end_node_labels = rel_obj.end_node.labels
+                    
+                    start_label = next((label for label in start_node_labels if label != 'Node'), "Component")
+                    end_label = next((label for label in end_node_labels if label != 'Node'), "Component")
+                    rel_type = rel_obj.type
+                    
+                    schema_lines.append(f"- ({start_label})-[:{rel_type}]->({end_label})")
                 
                 formatted_schema = "\n".join(schema_lines)
                 print(formatted_schema)
                 return formatted_schema
         except Exception as e:
             print(f"Error getting schema: {e}")
-            return "An error occurred while fetching the graph schema. It may not be supported by your Neo4j version."
+            return "An error occurred while fetching the graph schema. It may not be supported by your Neo4j version (requires 5.x+)."
             
     def query(self, query: str, parameters: Optional[dict] = None) -> List[Any]:
         """Runs a query and returns the results."""
@@ -296,7 +320,57 @@ class Neo4jConnector:
             full_dossier = "\n".join(filter(None, dossier_parts))
             
             return f"--- Dossier for '{entity_name}' ---\n{full_dossier}"
+    # In your Neo4jConnector class
 
+    def get_complete_schema_definition(self) -> str:
+        """
+        Returns a manually defined, complete schema string representing ALL possible
+        nodes and relationships the importer can create. This is more robust than
+        relying on db.schema.visualization() which only shows existing data.
+        """
+        schema_string = """
+        --- Complete Knowledge Graph Schema ---
+
+        **Node Types (Labels):**
+        - Simulation: Contains global simulation settings.
+        - SolverSettings: Holds numerical solver parameters.
+        - Body: Represents a rigid body in the model.
+        - Reference_Marker: A coordinate system attached to a body.
+        - Joint: A constraint between two bodies.
+        - Motion: A prescribed motion applied to a joint.
+        - PostRequest: A request to output a specific measurement.
+        - OutputComponent: The numerical time-series results of a PostRequest.
+        - Force: A force element acting between bodies.
+        - AutoTireSystem: A special node representing a 'black-box' tire model.
+        - TirePropertyFile: Represents a .tpf file.
+        - RoadPropertyFile: Represents a .rdf file.
+        - StateEquation: The core logic/equations for a subsystem like a tire.
+        - StateVariable: An input variable to a StateEquation.
+
+        **Relationship Types:**
+        - (Reference_Marker)-[:HAS_MARKER]->(Body)
+        - (Body)-[:CONNECTS_TO]->(Joint)
+        - (Joint)-[:CONNECTS_TO]->(Body)
+        - (Motion)-[:APPLIED_TO]->(Joint)
+        - (PostRequest)-[:MEASURES]->(Body)
+        - (PostRequest)-[:RELATIVE_TO]->(Body)
+        - (PostRequest)-[:IN_FRAME_OF]->(Body)
+        - (PostRequest)-[:HAS_COMPONENT]->(OutputComponent)
+        - (PostRequest)-[:MEASURES_AUTOTIRE]->(AutoTireSystem)
+        - (Force)-[:APPLIES_TO]->(Body)
+        - (Force)-[:HAS_REACTION_ON]->(Body)
+        - (AutoTireSystem)-[:APPLIES_FORCE_VIA]->(Force)
+        - (AutoTireSystem)-[:DEFINED_BY]->(TirePropertyFile)
+        - (AutoTireSystem)-[:DEFINED_BY]->(RoadPropertyFile)
+        - (AutoTireSystem)-[:GOVERNED_BY]->(StateEquation)
+        - (StateEquation)-[:USES_INPUT]->(StateVariable)
+        - (StateVariable)-[:MEASURES_KINEMATICS_OF]->(Reference_Marker)
+        - (Component)-[:SOLVED_WITH]->(SolverSettings) [Note: 'Component' can be Body, Joint, Force]
+        - (Motion)-[:INFLUENCES]->(PostRequest)
+        - (StateVariable)-[:INFLUENCES]->(PostRequest)
+        - (AutoTireSystem)-[:INFLUENCES]->(PostRequest)
+        """
+        return schema_string.strip()
 class Neo4jUploader:
     """
     Handles the connection to Neo4j and the uploading of graph data.
@@ -304,7 +378,7 @@ class Neo4jUploader:
     def __init__(self, uri, user, password):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.force_comps = ['FX', 'FY', 'FZ', 'TX', 'TY', 'TZ', 'FM', 'TM']
-        self.disp_comps = ['DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
+        self.disp_comps = ['X','Y','Z','DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
         self.reqsub_cols=['f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']
         self.rad_omegaact_omega = {'f2':'Radius',
                                    'f3':'OmegaActual',
@@ -425,7 +499,19 @@ class Neo4jUploader:
                     'inertia_xx': float(body.get('inertia_xx', 0.0)),
                     'inertia_yy': float(body.get('inertia_yy', 0.0)),
                     'inertia_zz': float(body.get('inertia_zz', 0.0)),
-                    'is_ground': body.get('IsGround', 'FALSE') == 'TRUE'
+                    'is_ground': body.get('IsGround', 'FALSE') == 'TRUE',
+                    'v_ic_x': float(body.get('v_ic_x', 0.0)),
+                    'v_ic_y': float(body.get('v_ic_y', 0.0)),
+                    'v_ic_z': float(body.get('v_ic_z', 0.0)),
+                    'w_ic_x': float(body.get('w_ic_x', 0.0)),
+                    'w_ic_y': float(body.get('w_ic_y', 0.0)),
+                    'w_ic_z': float(body.get('w_ic_z', 0.0)),
+                    'v_ic_x_flag': body.get('v_ic_x_flag', "FALSE"),
+                    'v_ic_y_flag': body.get('v_ic_y_flag', "FALSE"),
+                    'v_ic_z_flag': body.get('v_ic_z_flag', "FALSE"),
+                    'w_ic_x_flag': body.get('w_ic_x_flag', "FALSE"),
+                    'w_ic_y_flag': body.get('w_ic_y_flag', "FALSE"),
+                    'w_ic_z_flag': body.get('w_ic_z_flag', "FALSE")
                 }
                 
                 session.run("""
@@ -822,11 +908,11 @@ class Neo4jUploader:
             # --- Query 2: <<< ENHANCED FOR TIRE SYSTEM PATH DETAILS >>> ---
             tire_query = """
             // 1. Start from the input StateVariable and find its full chain
-            MATCH (sv:StateVariable)-[:USES_INPUT]->(se:StateEquation)<-[:GOVERNED_BY]-(ats:AutoTireSystem)
-            MATCH (ats)-[:APPLIES_FORCE_VIA]->(force:Force)
+            MATCH (sv:StateVariable)<-[:USES_INPUT]-(se:StateEquation)<-[:GOVERNED_BY]-(ats:AutoTireSystem)
+            MATCH (ats)-[:APPLIES_FORCE_VIA]->(force:Force)-[:APPLIES_FORCE_TO]->(tireforcebody:Body)
             
             // 2. Find the PostRequests that are influenced by this Tire System
-            MATCH (ats)-[:INFLUENCES]->(pr:PostRequest)
+            MATCH (ats)<-[:MEASURES_AUTOTIRE]-(pr:PostRequest)
 
             // 3. Find the body being measured by the State Variable
             MATCH (sv)-[:MEASURES_KINEMATICS_OF]->(:Reference_Marker)-[:HAS_MARKER]->(body:Body)
@@ -836,7 +922,8 @@ class Neo4jUploader:
                 collect(DISTINCT body.name) as measured_bodies,
                 collect(DISTINCT se.name) as via_state_equations,
                 collect(DISTINCT ats.name) as via_tire_systems,
-                collect(DISTINCT force.name) as resulting_in_forces
+                collect(DISTINCT force.name) as resulting_in_forces,
+                collect(DISTINCT tireforcebody.name) as affected_bodies
 
             // 5. Create the enriched INFLUENCES relationship
             MERGE (sv)-[r:INFLUENCES]->(pr)
@@ -844,7 +931,8 @@ class Neo4jUploader:
                 r.measured_bodies = measured_bodies,
                 r.via_state_equations = via_state_equations,
                 r.via_tire_systems = via_tire_systems,
-                r.resulting_in_forces = resulting_in_forces
+                r.resulting_in_forces = resulting_in_forces,
+                r.affected_bodies = affected_bodies
             """
             result_tire = session.run(tire_query).consume()
             print(f"  + Created/Updated {result_tire.counters.relationships_created} Tire input-driven [:INFLUENCES] relationships with full path details.")
@@ -877,23 +965,24 @@ if __name__ == "__main__":
     data_dir = script_dir / ".."/"../" / "Pdata"
     data_dir_sub = data_dir / "TestRig"
     XML_FILE = data_dir_sub / "SingleTire_Run.xml"
-
+    create_db = False
 
     if not XML_FILE.exists():
         print(f"Error: XML file not found at {XML_FILE}")
         print("Please make sure the file exists and the path is correct.")
     else:
-        uploader = Neo4jUploader(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        uploader.clear_database()
-        uploader.create_constraints()
-        uploader.upload_graph_from_xml(XML_FILE)
-        uploader.upload_simulation_results(data_dir_sub)
-        uploader.create_summary_relationships() 
+        if create_db:
+            uploader = Neo4jUploader(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+            uploader.clear_database()
+            uploader.create_constraints()
+            uploader.upload_graph_from_xml(XML_FILE)
+            uploader.upload_simulation_results(data_dir_sub)
+            uploader.create_summary_relationships() 
         connector = Neo4jConnector(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 
-        all_nodes_with_types = connector.get_dossier_for_any_entity('OmegaActual')
-        all_nodes_with_types = connector.get_all_nodes_with_primary_type()
-        # uploader.create_tire_force_summary()
+        #all_nodes_with_types = connector.get_dossier_for_any_entity('OmegaActual')
+        #all_nodes_with_types = connector.get_all_nodes_with_primary_type()
+        s = connector.get_nodes_by_type('PostRequest')
         uploader.close()
         print("\nData successfully uploaded to Neo4j.")
         print("You can now explore the graph in the Neo4j Browser.")

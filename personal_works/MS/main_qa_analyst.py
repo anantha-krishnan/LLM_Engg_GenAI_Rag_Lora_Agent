@@ -2,7 +2,7 @@
 import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
 from pathlib import Path
-from agent_qa_test_analyst import QAAnalystAgent
+from agent_qa_analyst_2 import QAAnalystAgent
 import global_vars
 
 # Initialize the agent
@@ -55,18 +55,17 @@ def respond(message, chat_history):
     # --- CORRECTED SYNTAX: Hide the status display once the final answer is complete ---
     final_status_update = gr.update(visible=False)
     yield chat_history, final_status_update
+
 def build_manual_ui():
     """Builds and launches the Gradio chat interface with a status display."""
     with gr.Blocks(theme=gr.themes.Glass(), title="QA Analyst Assistant") as demo:
         gr.Markdown("# QA Analyst Assistant")
         gr.Markdown("Ask questions about your MotionSolve model for root cause analysis.")
 
-        status_display = gr.Markdown(visible=False, elem_id="status_display")
-
         chatbot = gr.Chatbot([],
             elem_id="chatbot",
             bubble_full_width=False,
-            height=600,
+            height=400,
         )
 
         with gr.Row():
@@ -75,6 +74,7 @@ def build_manual_ui():
                 container=False,
                 scale=7
             )
+        status_display = gr.Markdown(visible=False, elem_id="status_display")
 
         def clear_msg():
             return ""
@@ -91,7 +91,7 @@ def build_manual_ui():
     demo.launch()
 
 if __name__ == "__main__":
-    graph_path = global_vars.data_dir / "model_analyst_langgraph.png"
+    graph_path = global_vars.data_dir / "qa_analyst_agent_graph_2.png"
     print(f"Attempting to save graph visualization to: {graph_path}")
     qa_analyst_agent.save_graph(graph_path)
     build_manual_ui()

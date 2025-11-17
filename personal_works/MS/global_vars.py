@@ -38,7 +38,7 @@ model_gemini_2_5_flash_5_20 = "gemini-2.5-flash-preview-05-20"
 model_gemini_2_5_pro='gemini-2.5-pro'
 model_gemini_1_5_pro='gemini-1.5-pro'
 model_gemini_2_0_flash_image='gemini-2.0-flash-preview-image-generation'
-gemini_text_model = model_gemini_1_5_pro
+gemini_text_model = model_gemini_2_5_pro
 gemini_image_model = model_gemini_2_0_flash_image
 CLAUDE_MODEL = "claude-3-5-sonnet-20240620"
 # neo4j connection details
