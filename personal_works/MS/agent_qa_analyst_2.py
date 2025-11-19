@@ -1,4 +1,3 @@
-# agent_qa_test_analyst.py
 from pathlib import Path
 from typing import List, TypedDict, Generator, Optional, Any
 from operator import itemgetter
@@ -18,8 +17,10 @@ from pydantic.v1 import BaseModel, Field
 from langchain_community.document_loaders import WebBaseLoader
 
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 
 from agent_tools_2 import ToolBelt
+kg_graph_documentation_cache = {}
 
 class GraphState(TypedDict):
     node_types: list[str]
@@ -33,6 +34,8 @@ class GraphState(TypedDict):
     plan_step: int
     step_summaries: List[str]
     step_decisions: List[str]
+    rewrite_count: int=0
+    user_feedback: str
 
 
 class KG_Query(BaseModel):
@@ -60,7 +63,13 @@ class QAAnalystAgent:
         These Forces and moments can be calulated by simple expressions or as constants or calculated via user subroutines employing state equations. 
         These forces, in turn, affect the Bodies' motion, creating a feedback loop that evolves over time. 
         PostRequests provide a way to measure and plot these physical quantities for analysis by user. Post requests measure displacements, velocities, accelerations, forces, moments, and other derived quantities at specified locations using markers attached to bodies in the model during the simulation.
-        Whenever a general symptom is reported, postrequests are often the best starting point to trace back to root causes. Identify post requests relevant to the symptom, then trace their dependencies back through forces, motions, joints, and bodies to find potential issues.
+        General strategy to approach any investigation
+        1. Understand all the entities first from their properties as defined in the model coupled with explanations from official documentation. 
+        2. Understand how the requested entity interacts with others through the details. Try to form a mental model of the entity and its relationships.
+        3. Use PostRequests to understand the physical quantities of the entities. 
+        4. Use this understanding to trace root causes, relationships, and dependencies in the model
+        5. No need to analyse any property files at all. Just focus on the model structure and its data.        
+        Whenever a general symptom is reported, if nothing else works, postrequests are often the best starting point to trace back to root causes. Identify post requests relevant to the symptom, then trace their dependencies back through forces, motions, joints, and bodies to find potential issues.
         """
         # Initialize Neo4j connector
         self.neo4j_connector = Neo4jConnector(
@@ -83,9 +92,19 @@ class QAAnalystAgent:
     def close(self):
         self.neo4j_connector.close()
 
+    def _wait_for_feedback(self, state: GraphState) -> GraphState:
+        """
+        A placeholder node that the graph will interrupt after.
+        The UI will use this interruption to ask the user for feedback.
+        """
+        # The presence of the plan is the signal to the UI.
+        
+        state['reasoning_log'].append(f"Proposing plan to user for feedback: {state['plan']}")
+        return state
+    
     def _rewrite_hypothesis_plan(self, state: GraphState) -> str:
         """Rewrite hypotheses into clear, distinct statements."""
-        
+        state['rewrite_count'] += 1
         rewrite_prompt = ChatPromptTemplate.from_template(
             """You are a Master CAE Expert for Altair MotionSolve. Your role is to act as a supervisor, creating a strategic plan to investigate a user's query.
             **Expert Mindset (First Principles of the System):**        
@@ -111,8 +130,9 @@ class QAAnalystAgent:
             2. If the new information contradicts your original hypothesis, you must rewrite it to better fit the evidence.
             3. If the original plan is still valid, you can keep it as is.
             4. If a conclusion can be drawn based on the new information, you may choose to end the investigation early. In that case, provide a empty list of action plan.
-            5. Always justify your decision with a summary that includes key facts and reasoning as a standalone explanation. This summary will be used in the final answer.
-            6. Remember, you are the one who will ultimately stop the investigation when you feel enough information has been gathered. You can choose to end the investigation at any step if you feel at least 70-80'%' confident in your findings.
+            5. Always try to correlate your findings with post request numerical data if possible as it gives stronger evidence.
+            6. Always justify your decision with a summary that includes key facts and reasoning as a standalone explanation. This summary will be used in the final answer.
+            7. Remember, you are the one who will ultimately stop the investigation when you feel enough information has been gathered. You can choose to end the investigation at any step if you feel at least 70-80'%' confident in your findings.
             
             **Your Output (respond ONLY with a valid JSON object matching this schema):**
             {{
@@ -141,10 +161,17 @@ class QAAnalystAgent:
         state["plan"]=rewritten.rewritten_plan
         state["hypotheses"]=rewritten.rewritten_hypotheses
         state["step_decisions"]=state["step_decisions"] + [rewritten.summary]        
-        
+        if state['rewrite_count'] >5:
+            # To avoid infinite loops, we can choose to end the investigation after several rewrites
+            state["plan"] = []
         print(f"---INFO: Step Decisions --- \n{state['step_decisions']}")
         return state
-        
+    def _incorporate_user_feedback(self, state: GraphState) -> GraphState:
+        """Incorporate user feedback into the state."""
+        # This is a placeholder implementation
+        feedback = state.get("user_feedback", "User provided no feedback, continuing.")
+        state['reasoning_log'].append(f"User Feedback: {feedback}")
+        return state    
     def _create_initial_hypotheses(self, state: GraphState) -> GraphState:
         """Initial state: Determine starting nodes based on user question."""
         question = state["question"]
@@ -155,10 +182,10 @@ class QAAnalystAgent:
         {expert_mindset}
 
         **Your Goal:**
-        Your goal is to use this mindset to understand the user's question and create a plan to investigate it. The user is reporting a symptom, and you must plan to find its cause.
+        Your goal is to use this mindset to understand the user's question and create a plan to investigate it.
 
         **Your Task (Think Step-by-Step):**
-        1. Read the "Expert Mindset" to understand how entities are causally linked.
+        1. Read the "Expert Mindset" to understand the various factors at play and how to approach the user's question.
         
         2. Read the user's question carefully. It describes a symptom in a vehicle dynamics simulation.
 
@@ -167,12 +194,11 @@ class QAAnalystAgent:
         {schema}
 
         **3. Formulate Hypotheses:**
-        Based on the symptom and your expert knowledge, generate a ranked list of 2-3 distinct, testable hypotheses for the root cause. A good hypothesis links a potential cause to the observed effect.
+        Based on the expert knowledge, generate a ranked list of 2-3 distinct, testable hypotheses for the user's query. A good hypothesis links a potential cause to the observed effect.
         Example 1: "Hypothesis: Asymmetric tire forces are causing the vehicle to pull left."
 
         **4. Create an Initial Action Plan:**
-        Define clear, concrete step by step actions to start testing the hypotheses one by one. Be very explorative and cover multiple angles. This is the beginning of a investigation, so try to attack the query from multiple perspectives.
-        The action plan will be used to gather context of entities by type or name from the knowledge graph by another agent.
+        Define clear, concrete step by step actions to start testing the hypotheses one by one. Be specific and no need to cover all the various angles.        
         **User's Question:**
         "{question}"
 
@@ -366,20 +392,26 @@ class QAAnalystAgent:
         log_entry = f"--- INFO: Retrieved KG context for step '{step}':\n{step_kg_context}"
         for node in kg_nodes:
             # Enrich each node with documentation explanation
-            doc_explanation = self._get_documentation_explanation(node)
-            if doc_explanation:
-                node_explanations.append(doc_explanation)
+            if node in kg_graph_documentation_cache:
+                doc_explanation = kg_graph_documentation_cache[node]
+            else:
+                doc_explanation = self._get_documentation_explanation(node)
+                if doc_explanation:
+                    node_explanations.append(doc_explanation)
+                    kg_graph_documentation_cache[node] = doc_explanation
         
         print("---INFO: Summarizing findings for this step... ---")
         summarizer_node_prompt = ChatPromptTemplate.from_template(
-            """You are an expert CAE analyst. Your current investigation goal is:
+            """You are an expert CAE analyst. The user has asked you the following question:
             '{step_goal}'
-           
-            You have retrieved the data for each entity from the knowledge graph and applied exhaustive explanation using the official documentation for each of the entity's property.
+            Your current investigation goal is:
+            To analyze the retrieved data for each entity from the knowledge graph and apply exhaustive explanation using the official documentation for each of the entity's property.             
+            No need to think about the relation between entities as it will be taken care by another agent.
+            The retrieved data contains explanation for all the numerical values mentioned. 
             '{explanations}'
 
             Based ONLY on the above details, what is your key finding for this step? What did you learn? State your conclusion clearly. If the data is inconclusive, say so.
-            
+            Retain numerical data in your explanations.
             Finding:"""
         )
         summarizer_node_chain = summarizer_node_prompt | self.llm | StrOutputParser()
@@ -389,14 +421,19 @@ class QAAnalystAgent:
         })
 
         summarizer_node_relation_prompt = ChatPromptTemplate.from_template(
-            """You are an expert CAE analyst. Your current investigation goal is:
+            """You are an expert CAE analyst. The user has asked you the following question:
             '{step_goal}'
 
-            You have retrieved the following data from the knowledge graph to help you. It contains multiple entities and their relationships:
+            Your current investigation goal is:
+            To analyze the relationships between the entities retrieved from the knowledge graph and their connections with respect to the user's query.
+            The individual entity data analysis has been taken care by another agent.
+
+            You have retrieved the following data from the knowledge graph to help you. It contains multiple entities and their relationships.
+            It contains explanation for all the numerical values wherever possible.
             '{context}'
 
             Based ONLY on the above details, what is your key finding for this step? What did you learn? State your conclusion clearly. If the data is inconclusive, say so.
-            
+            Retain numerical data in your explanations.
             Finding:"""
         )
         summarizer_node_relation_prompt_chain = summarizer_node_relation_prompt | self.llm | StrOutputParser()
@@ -413,9 +450,9 @@ class QAAnalystAgent:
             You have analyzed the data of each entity individually and understood their properties in depth with respect to the current goal. Its explanation is as  follows:
             {node_data_goal_summary}
             You have also analyzed the relationships between these entities and their connections with respect to the current goal. Its explanation is as follows:
-            '{node_relation_goal_summary}'
-            Based ONLY on the above details, what is your key finding for this step? What did you learn? State your conclusion clearly. If the data is inconclusive, say so.
-            Provide a summary of everything. Retain all numerical data. 
+            {node_relation_goal_summary}
+            Based ONLY on the above details, provide a detailed summary of everything along with numerical facts.
+            Retain numerical data in your explanations. 
             
             Finding:"""
         )
@@ -491,11 +528,15 @@ class QAAnalystAgent:
     def _create_graph(self) -> StateGraph:
         """Creates and returns the StateGraph for the analyst agent."""
         workflow = StateGraph(GraphState)
+        checkpointer = MemorySaver()
         workflow.add_node("create_initial_hypotheses", self._create_initial_hypotheses)
         workflow.add_node("get_step_kg_context", self._get_step_kg_context)
         workflow.add_node("generate_answer", self._generate_final_answer)
         workflow.add_node("analyse_plan_step", self._analyse_plan_step)
         workflow.add_node("rewrite_plan", self._rewrite_hypothesis_plan)
+        workflow.add_node("wait_for_feedback", self._wait_for_feedback)
+        workflow.add_node("incorporate_user_feedback", self._incorporate_user_feedback)
+
         workflow.set_entry_point("create_initial_hypotheses")
         workflow.add_edge("create_initial_hypotheses", "get_step_kg_context")
         workflow.add_edge("get_step_kg_context","analyse_plan_step")
@@ -504,12 +545,17 @@ class QAAnalystAgent:
             "rewrite_plan",
             lambda state: bool(len(state["plan"])),
             {
-                True: "get_step_kg_context",
+                True: "wait_for_feedback",
                 False: "generate_answer",
             }
         )
+        workflow.add_edge("wait_for_feedback", "incorporate_user_feedback")
+        workflow.add_edge("incorporate_user_feedback", "get_step_kg_context")
         workflow.add_edge("generate_answer", END)
-        return workflow.compile()
+        return workflow.compile(
+            checkpointer=checkpointer, 
+            interrupt_after=["wait_for_feedback"]
+        )
     
     def process_message(self, message: str, chat_history: list):
         # Implement the logic to process the message using the vector store
@@ -519,14 +565,17 @@ class QAAnalystAgent:
             "chat_history": chat_history,
             "message": '',
             "step_summaries": [],
-            "step_decisions": []
+            "step_decisions": [],
+            "rewrite_count":0,
+            "user_feedback": ''
             }
         last_log_len = 0
         final_answer_started = False
+        config = {"configurable": {"thread_id": "user_session_1"}} # Use a unique ID per session
 
         # The stream method on a compiled graph yields the state updates from each node.
         # We need to filter for the updates from our 'generate' node to get the tokens.
-        for update in self.qa_graph.stream(input):
+        for update in self.qa_graph.stream(input,config=config, stream_mode="updates"):
             if "reasoning_log" in update[list(update.keys())[0]]:
                 current_log = update[list(update.keys())[0]]["reasoning_log"]
                 if len(current_log) > last_log_len:
@@ -540,8 +589,48 @@ class QAAnalystAgent:
                 final_answer_started = True
 
                 yield update["generate_answer"]["answer"]
+        final_state = self.qa_graph.get_state(config)
+        if final_state.next == ("incorporate_user_feedback",):
+            # The graph is paused. Signal the UI.
+            current_plan = final_state.values.get("plan", [])
+            plan_str = "\n".join(f"- {step}" for step in current_plan)
+            # Yield a special, structured message that the UI can parse.
+            yield f"WAIT_FOR_FEEDBACK\nPLAN:\n{plan_str}"
+    def resume_with_feedback(self, feedback: str):
+        """Resumes a paused graph run with new user feedback."""
+        config = {"configurable": {"thread_id": "user_session_1"}}
         
-        # yield f"Processed message: {message}"
+        # We pass the feedback in the 'input' dict. LangGraph will merge this with the current state.
+        # Our _incorporate_user_feedback node will then access it from the state.
+        resume_input = {"user_feedback": feedback}
+        self.qa_graph.update_state(config, {"user_feedback": feedback})
+        stream_generator = self.qa_graph.stream(None, config=config, stream_mode="updates")
+        current_state = self.qa_graph.get_state(config)
+        # We get the log length *after* updating the state so we can track new entries correctly.
+        last_log_len = len(current_state.values.get('reasoning_log', []))
+        final_answer_started = False
+        for update in stream_generator:
+            if "reasoning_log" in update.get(list(update.keys())[0], {}):
+                current_log = update[list(update.keys())[0]]["reasoning_log"]
+                if len(current_log) > last_log_len:
+                    new_entry = current_log[-1]
+                    yield f"STATUS: {new_entry}\n"
+                    last_log_len = len(current_log)
+                    
+            if "generate_answer" in update:
+                if not final_answer_started:
+                    yield "FINAL_ANSWER_START\n"
+                    final_answer_started = True
+
+                yield update["generate_answer"]["answer"]
+        
+        final_state = self.qa_graph.get_state(config)
+        if final_state.next == ("incorporate_user_feedback",):
+            current_plan = final_state.values.get("plan", [])
+            plan_str = "\n".join(f"- {step}" for step in current_plan)
+            yield f"WAIT_FOR_FEEDBACK\nPLAN:\n{plan_str}"
+            
+     
     def save_graph(self, filepath: Path):
         """Saves the graph structure to a file."""
         graph = self.qa_graph.get_graph()
