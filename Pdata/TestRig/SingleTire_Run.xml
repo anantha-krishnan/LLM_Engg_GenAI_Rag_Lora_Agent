@@ -1,0 +1,1268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl"
+ href="http://www.altairhyperworks.com/motionsolve-xml/motionsolve_v1.xsl"?>
+<MultiBodySystem
+ xmlns:xs="http://www.w3.org/2001/XMLSchema-instance"
+ xs:noNamespaceSchemaLocation="http://www.altairhyperworks.com/motionsolve-xml/motionsolve_v1.xsd"
+     hw_version          = "2025.1"
+     build_number        = ".0.14">
+ <Messaging
+     log_option          = "Overwrite"
+ />
+<!--
+Model Hierarchy
+    Model
+        Misc
+        AutoTire
+            Tire States
+            Tire Graphics
+        Default Analysis
+-->
+ <Model>
+  <Param_Simulation
+     constr_tol          = "1.0000E-10"
+     implicit_diff_tol   = "1.0000E-06"
+     nr_converg_ratio    = "0.09"
+     collision_engine    = "PCM"
+     linsolver           = "HARWELL"
+  />
+  <Param_Transient
+     integrator_type     = "DSTIFF"
+     integr_tol          = "0.001"
+     h_max               = "0.001"
+     h0_max              = "1.0000E-08"
+     h_min               = "1.0000E-06"
+     max_order           = "5"
+     vel_tol_factor      = "1000."
+     dae_constr_tol      = "1.0000E-05"
+     dae_corrector_maxit = "4"
+     dae_corrector_minit = "0"
+     dae_index           = "3"
+     dae_vel_ctrl        = "FALSE"
+  />
+  <Param_Static
+     method              = "FIM_D"
+     max_error           = "0.0001"
+     max_imbalance       = "0.0001"
+     stability           = "1.0000E-10"
+     max_ke_tol          = "1.0000E-05"
+     max_dq_tol          = "0.001"
+     max_num_iter        = "750"
+  />
+  <Param_Linear
+     anim_scale          = "1."
+     eigen_analysis      = "TRUE"
+     write_simulinkmdl   = "FALSE"
+     write_matlabfiles   = "FALSE"
+     write_oml           = "TRUE"
+     write_eig_info      = "TRUE"
+     write_mkb           = "FALSE"
+  />
+  <Param_FreqResponse
+     freq_unit           = "Hz"
+     phase_unit          = "RAD"
+     write_mode_factors  = "FALSE"
+     write_energy_dist   = "FALSE"
+  />
+  <H3DOutput
+     switch_on           = "TRUE"
+     linear_animation    = "TRUE"
+     linz_animation      = "TRUE"
+     frf_animation       = "TRUE"
+  />
+  <ResOutput
+     abf_file            = "TRUE"
+     plt_file            = "TRUE"
+     angle_type          = "YPR"
+     capture_max_pd      = "TRUE"
+     contact_gra_output  = "TRUE"
+     plt_unique_time     = "ALL"
+     azero               = "1.0000E-10"
+     dzero               = "1.0000E-10"
+     fzero               = "1.0000E-10"
+     vzero               = "1.0000E-10"
+  />
+  <Param_Unit
+     force_unit          = "NEWTON"
+     mass_unit           = "KILOGRAM"
+     length_unit         = "MILLIMETER"
+     time_unit           = "SECOND"
+  />
+<!-- MODEL.Global_Frame -->
+  <Reference_Marker
+     id                  = "30101010"
+     label               = "Global Frame"
+     full_label          = "Model-Global Frame"
+     body_id             = "30101"
+     body_type           = "RigidBody"
+  />
+<!-- MODEL.o_hub_velocity.j -->
+  <Reference_Marker
+     id                  = "30101020"
+     label               = "Hub velocity-Marker J"
+     full_label          = "Model-Hub velocity-Marker J"
+     body_id             = "30101"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.m_0 -->
+  <Reference_Marker
+     id                  = "30101040"
+     label               = "Marker 0"
+     full_label          = "Model-Marker 0"
+     body_id             = "30101"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "200."
+  />
+<!-- MODEL.b_hub.lprf -->
+  <Reference_Marker
+     id                  = "30102001"
+     label               = "Hub-Marker LPRF"
+     full_label          = "Model-Hub-Marker LPRF"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+  />
+<!-- MODEL.b_hub.cm -->
+  <Reference_Marker
+     id                  = "30102020"
+     label               = "Hub-Marker CM"
+     full_label          = "Model-Hub-Marker CM"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.m_tire_ref -->
+  <Reference_Marker
+     id                  = "30102021"
+     label               = "Tire_reference"
+     full_label          = "Model-Tire_reference"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.o_hub_velocity.i -->
+  <Reference_Marker
+     id                  = "30102022"
+     label               = "Hub velocity-Marker I"
+     full_label          = "Model-Hub velocity-Marker I"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.b_wheel_part.cm -->
+  <Reference_Marker
+     id                  = "30301010"
+     label               = "wheel_part-Marker CM"
+     full_label          = "Model-AutoTire-wheel_part-Marker CM"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "0."
+     a10                 = "0."
+     a20                 = "1."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.b_wheel_part.im -->
+  <Reference_Marker
+     id                  = "30301011"
+     label               = "wheel_part-Marker IM"
+     full_label          = "Model-AutoTire-wheel_part-Marker IM"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "0."
+     a10                 = "0."
+     a20                 = "1."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.b_wheel_part.lprf -->
+  <Reference_Marker
+     id                  = "30301012"
+     label               = "wheel_part-Marker LPRF"
+     full_label          = "Model-AutoTire-wheel_part-Marker LPRF"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.m_rim_x_axis -->
+  <Reference_Marker
+     id                  = "30301020"
+     label               = "m_rim_x_axis"
+     full_label          = "Model-AutoTire-m_rim_x_axis"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0.1"
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.m_I_marker -->
+  <Reference_Marker
+     id                  = "30301021"
+     label               = "Tire I Marker"
+     full_label          = "Model-AutoTire-Tire I Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.m_J_marker -->
+  <Reference_Marker
+     id                  = "30301022"
+     label               = "Tire J Marker"
+     full_label          = "Model-AutoTire-Tire J Marker"
+     body_id             = "30101"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.j_fixed.joint_i -->
+  <Reference_Marker
+     id                  = "30301023"
+     label               = "wheel attachment-Marker I"
+     full_label          = "Model-AutoTire-wheel attachment-Marker I"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.gf_tire_force.jfloat -->
+  <Reference_Marker
+     id                  = "30301024"
+     label               = "Tire force-Float Marker J"
+     full_label          = "Model-AutoTire-Tire force-Float Marker J"
+     body_id             = "30101"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.m_rim_y_axis -->
+  <Reference_Marker
+     id                  = "30301030"
+     label               = "m_rim_y_axis"
+     full_label          = "Model-AutoTire-m_rim_y_axis"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0.1"
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.m_rim_z_axis -->
+  <Reference_Marker
+     id                  = "30301040"
+     label               = "m_rim_z_axis"
+     full_label          = "Model-AutoTire-m_rim_z_axis"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295.1"
+  />
+<!-- MODEL.ts_AutoTire.m_wheelcm -->
+  <Reference_Marker
+     id                  = "30302020"
+     label               = "CM Marker for wheel body"
+     full_label          = "Model-AutoTire-CM Marker for wheel body"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.j_fixed.joint_j -->
+  <Reference_Marker
+     id                  = "30302021"
+     label               = "wheel attachment-Marker J"
+     full_label          = "Model-AutoTire-wheel attachment-Marker J"
+     body_id             = "30102"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.m_spoke_center -->
+  <Reference_Marker
+     id                  = "30501010"
+     label               = "spoke_center"
+     full_label          = "Model-AutoTire-Tire Graphics-spoke_center"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.m_spkgra_align -->
+  <Reference_Marker
+     id                  = "30501011"
+     label               = "spoke graphic align marker"
+     full_label          = "Model-AutoTire-Tire Graphics-spoke graphic align marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_hub_center_marker -->
+  <Reference_Marker
+     id                  = "90000000"
+     label               = "Wheel Hub - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Hub - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-5.125"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_1_center_marker -->
+  <Reference_Marker
+     id                  = "90000001"
+     label               = "Wheel Spoke 1 - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 1 - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "0."
+     a10                 = "0."
+     a20                 = "-1."
+     a02                 = "1."
+     a12                 = "0."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_2_center_marker -->
+  <Reference_Marker
+     id                  = "90000002"
+     label               = "Wheel Spoke 2 - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 2 - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "-0.95105652"
+     a10                 = "0."
+     a20                 = "-0.30901699"
+     a02                 = "0.30901699"
+     a12                 = "0."
+     a22                 = "-0.95105652"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_3_center_marker -->
+  <Reference_Marker
+     id                  = "90000003"
+     label               = "Wheel Spoke 3 - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 3 - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "-0.58778525"
+     a10                 = "0."
+     a20                 = "0.80901699"
+     a02                 = "-0.80901699"
+     a12                 = "0."
+     a22                 = "-0.58778525"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_4_center_marker -->
+  <Reference_Marker
+     id                  = "90000004"
+     label               = "Wheel Spoke 4 - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 4 - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "0.58778525"
+     a10                 = "0."
+     a20                 = "0.80901699"
+     a02                 = "-0.80901699"
+     a12                 = "0."
+     a22                 = "0.58778525"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_5_center_marker -->
+  <Reference_Marker
+     id                  = "90000005"
+     label               = "Wheel Spoke 5 - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 5 - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "0."
+     pos_z               = "295."
+     a00                 = "0.95105652"
+     a10                 = "0."
+     a20                 = "-0.30901699"
+     a02                 = "0.30901699"
+     a12                 = "0."
+     a22                 = "0.95105652"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_tread_center_marker -->
+  <Reference_Marker
+     id                  = "90000006"
+     label               = "Tire tread - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire tread - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_bead_inner_center_marker -->
+  <Reference_Marker
+     id                  = "90000007"
+     label               = "Tire bead inner - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire bead inner - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_bead_outer_center_marker -->
+  <Reference_Marker
+     id                  = "90000008"
+     label               = "Tire bead outer - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire bead outer - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_sidewall_inner_center_marker -->
+  <Reference_Marker
+     id                  = "90000009"
+     label               = "Tire sidewall inner - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire sidewall inner - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_sidewall_outer_center_marker -->
+  <Reference_Marker
+     id                  = "90000010"
+     label               = "Tire sidewall outer - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire sidewall outer - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_rim_center_marker -->
+  <Reference_Marker
+     id                  = "90000011"
+     label               = "Wheel Rim - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Rim - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_inner_center_marker -->
+  <Reference_Marker
+     id                  = "90000012"
+     label               = "Wheel Inner - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Inner - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "-71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_outer_center_marker -->
+  <Reference_Marker
+     id                  = "90000013"
+     label               = "Wheel Outer - Center Marker"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Outer - Center Marker"
+     body_id             = "30301"
+     body_type           = "RigidBody"
+     pos_x               = "0."
+     pos_y               = "71.75"
+     pos_z               = "295."
+     a00                 = "-1."
+     a10                 = "0."
+     a20                 = "0."
+     a02                 = "0."
+     a12                 = "1."
+     a22                 = "0."
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_time -->
+  <Reference_Variable
+     id                  = "30400100"
+     label               = "SolverVariable u time"
+     full_label          = "Model-AutoTire-Tire States-SolverVariable u time"
+     type                = "EXPRESSION"
+     expr                = "TIME"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_dx -->
+  <Reference_Variable
+     id                  = "30400200"
+     label               = "X Disp - u_rim_dx"
+     full_label          = "Model-AutoTire-Tire States-X Disp - u_rim_dx"
+     type                = "EXPRESSION"
+     expr                = "dx(30301021,30101040,30101040)"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_dy -->
+  <Reference_Variable
+     id                  = "30400300"
+     label               = "Y Disp - u_rim_dy"
+     full_label          = "Model-AutoTire-Tire States-Y Disp - u_rim_dy"
+     type                = "EXPRESSION"
+     expr                = "dy(30301021,30101040,30101040)"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_dz -->
+  <Reference_Variable
+     id                  = "30400400"
+     label               = "Z Disp - u_rim_dz"
+     full_label          = "Model-AutoTire-Tire States-Z Disp - u_rim_dz"
+     type                = "EXPRESSION"
+     expr                = "dz(30301021,30101040,30101040)"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_x_dot_x -->
+  <Reference_Variable
+     id                  = "30400500"
+     label               = "X Disp - u_rim_x_dot_x"
+     full_label          = "Model-AutoTire-Tire States-X Disp - u_rim_x_dot_x"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,1,1)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_x_dot_y -->
+  <Reference_Variable
+     id                  = "30400600"
+     label               = "Y Disp - u_rim_x_dot_y"
+     full_label          = "Model-AutoTire-Tire States-Y Disp - u_rim_x_dot_y"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,1,2)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_x_dot_z -->
+  <Reference_Variable
+     id                  = "30400700"
+     label               = "Z Disp - u_rim_x_dot_z"
+     full_label          = "Model-AutoTire-Tire States-Z Disp - u_rim_x_dot_z"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,1,3)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_y_dot_x -->
+  <Reference_Variable
+     id                  = "30400800"
+     label               = "X Disp - u_rim_y_dot_x"
+     full_label          = "Model-AutoTire-Tire States-X Disp - u_rim_y_dot_x"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,2,1)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_y_dot_y -->
+  <Reference_Variable
+     id                  = "30400900"
+     label               = "Y Disp - u_rim_y_dot_y"
+     full_label          = "Model-AutoTire-Tire States-Y Disp - u_rim_y_dot_y"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,2,2)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_y_dot_z -->
+  <Reference_Variable
+     id                  = "30401000"
+     label               = "Z Disp - u_rim_y_dot_z"
+     full_label          = "Model-AutoTire-Tire States-Z Disp - u_rim_y_dot_z"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(907,30301021,30101040,30101040,2,3)"
+     usrsub_dll_name     = "msautoutils"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_vx -->
+  <Reference_Variable
+     id                  = "30401100"
+     label               = "X Vel - u_rim_vx"
+     full_label          = "Model-AutoTire-Tire States-X Vel - u_rim_vx"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,1,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_vy -->
+  <Reference_Variable
+     id                  = "30401200"
+     label               = "Y Vel - u_rim_vy"
+     full_label          = "Model-AutoTire-Tire States-Y Vel - u_rim_vy"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,2,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_vz -->
+  <Reference_Variable
+     id                  = "30401300"
+     label               = "Z Vel - u_rim_vz"
+     full_label          = "Model-AutoTire-Tire States-Z Vel - u_rim_vz"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,3,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_wx -->
+  <Reference_Variable
+     id                  = "30401400"
+     label               = "RX Vel - u_rim_wx"
+     full_label          = "Model-AutoTire-Tire States-RX Vel - u_rim_wx"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,4,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_wy -->
+  <Reference_Variable
+     id                  = "30401500"
+     label               = "RY Vel - u_rim_wy"
+     full_label          = "Model-AutoTire-Tire States-RY Vel - u_rim_wy"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,5,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_wz -->
+  <Reference_Variable
+     id                  = "30401600"
+     label               = "RZ Vel - u_rim_wz"
+     full_label          = "Model-AutoTire-Tire States-RZ Vel - u_rim_wz"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(906,6,30301021,30101040,30101040)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "VARSUB"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sv_u_rim_ss_lon_slip -->
+  <Reference_Variable
+     id                  = "30401700"
+     label               = "slip - u_rim_ss_lon_slip"
+     full_label          = "Model-AutoTire-Tire States-slip - u_rim_ss_lon_slip"
+     type                = "EXPRESSION"
+     expr                = "0.0"
+  />
+<!-- MODEL.ts_AutoTire.st_tpf -->
+  <Reference_String
+     id                  = "303001"
+     label               = "tire property file string"
+     full_label          = "Model-AutoTire-tire property file string"
+     string              = "../../../../../../Projects/Tires/camContact/sample_fiala_with_single_contact.tpf"
+  />
+<!-- MODEL.ts_AutoTire.st_rpf -->
+  <Reference_String
+     id                  = "303002"
+     label               = "road property file string"
+     full_label          = "Model-AutoTire-road property file string"
+     string              = "../../../../../../Projects/Roads/2D_Flat.rdf"
+  />
+<!-- MODEL.ts_AutoTire.st_role -->
+  <Reference_String
+     id                  = "303003"
+     label               = "minor role string"
+     full_label          = "Model-AutoTire-minor role string"
+     string              = "front"
+  />
+<!-- MODEL.ts_AutoTire.st_simulation -->
+  <Reference_String
+     id                  = "303004"
+     label               = "simulation type string"
+     full_label          = "Model-AutoTire-simulation type string"
+     string              = "VEHICLE_HANDLING_DYNAMIC"
+  />
+<!-- MODEL.ts_AutoTire.st_axle -->
+  <Reference_String
+     id                  = "303005"
+     label               = "Axle Number"
+     full_label          = "Model-AutoTire-Axle Number"
+     string              = "1"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sa_u_array_fixed -->
+  <Reference_Array
+     id                  = "30400100"
+     label               = "SolverArray U - Fixed Road"
+     full_label          = "Model-AutoTire-Tire States-SolverArray U - Fixed Road"
+     type                = "U"
+     num_element         = "17">
+30400100 30400200 30400300 30400400 30400500 30400600 30400700 30400800 30400900 30401000 30401100 30401200 
+30401300 30401400 30401500 30401600 30401700 
+  </Reference_Array>
+<!-- MODEL.ts_AutoTire.sys_tire_states.sa_x_array -->
+  <Reference_Array
+     id                  = "30400200"
+     label               = "SolverArray X"
+     full_label          = "Model-AutoTire-Tire States-SolverArray X"
+     type                = "X"
+     num_element         = "1"
+  />
+<!-- MODEL.ts_AutoTire.sys_tire_states.sa_y_array -->
+  <Reference_Array
+     id                  = "30400300"
+     label               = "SolverArray Y"
+     full_label          = "Model-AutoTire-Tire States-SolverArray Y"
+     type                = "Y"
+     num_element         = "1"
+  />
+<!-- MODEL.ts_AutoTire.ar_tire_input_array -->
+  <Reference_Array
+     id                  = "30300100"
+     label               = "tire input array"
+     full_label          = "Model-AutoTire-tire input array"
+     type                = "IC"
+     num_element         = "18">
+ 30400200 18 0 303003 303001
+ 303004 303002 303005 326 0
+ 1 30300200 30300300 0 0
+ 0 303005 0
+  </Reference_Array>
+<!-- MODEL.ts_AutoTire.ar_scaling_drift -->
+  <Reference_Array
+     id                  = "30300200"
+     label               = "Scaling and drift factors"
+     full_label          = "Model-AutoTire-Scaling and drift factors"
+     type                = "IC"
+     num_element         = "8">
+ 0 1 1 1 0
+ 0 0 0
+  </Reference_Array>
+<!-- MODEL.ts_AutoTire.ar_user_param -->
+  <Reference_Array
+     id                  = "30300300"
+     label               = "User parameters"
+     full_label          = "Model-AutoTire-User parameters"
+     type                = "IC"
+     num_element         = "1">
+ 0
+  </Reference_Array>
+<!-- MODEL.B_Ground -->
+  <Body_Rigid
+     id                  = "30101"
+     label               = "Ground Body"
+     full_label          = "Model-Ground Body"
+     IsGround            = "TRUE"
+  />
+<!-- MODEL.b_hub -->
+  <Body_Rigid
+     id                  = "30102"
+     label               = "Hub"
+     full_label          = "Model-Hub"
+     cg_id               = "30102020"
+     im_id               = "30102020"
+     lprf_id             = "30102001"
+     mass                = "1."
+     inertia_xx          = "1000."
+     inertia_yy          = "1000."
+     inertia_zz          = "1000."
+     v_ic_x              = "5555.5556"
+     v_ic_y              = "0."
+     v_ic_z              = "0."
+     w_ic_x              = "0."
+     w_ic_y              = "17.72107"
+     w_ic_z              = "0."
+     v_ic_x_flag         = "TRUE"
+     v_ic_y_flag         = "TRUE"
+     v_ic_z_flag         = "TRUE"
+     w_ic_x_flag         = "TRUE"
+     w_ic_y_flag         = "TRUE"
+     w_ic_z_flag         = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.b_wheel_part -->
+  <Body_Rigid
+     id                  = "30301"
+     label               = "wheel_part"
+     full_label          = "Model-AutoTire-wheel_part"
+     cg_id               = "30301010"
+     im_id               = "30301011"
+     lprf_id             = "30301012"
+     mass                = "36."
+     inertia_xx          = "1750000."
+     inertia_yy          = "1750000."
+     inertia_zz          = "3000000."
+     v_ic_x              = "5555.56"
+     v_ic_y              = "0."
+     v_ic_z              = "0."
+     w_ic_x              = "0."
+     w_ic_y              = "0."
+     w_ic_z              = "17.7211"
+     v_ic_x_flag         = "TRUE"
+     v_ic_y_flag         = "TRUE"
+     v_ic_z_flag         = "TRUE"
+     w_ic_x_flag         = "TRUE"
+     w_ic_y_flag         = "TRUE"
+     w_ic_z_flag         = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.j_fixed -->
+  <Constraint_Joint
+     id                  = "303001"
+     label               = "wheel attachment"
+     full_label          = "Model-AutoTire-wheel attachment"
+     type                = "FIXED"
+     i_marker_id         = "30301023"
+     j_marker_id         = "30302021"
+  />
+  <Force_Gravity
+     grav_x              = "0."
+     grav_y              = "0."
+     grav_z              = "-9810."
+  />
+<!-- MODEL.ts_AutoTire.gf_tire_force -->
+  <Force_Vector_TwoBody
+     id                  = "30301"
+     label               = "Tire force"
+     type                = "ForceAndTorque"
+     i_marker_id         = "30301021"
+     j_floating_marker_id= "30301024"
+     ref_marker_id       = "30101040"
+     usrsub_param_string = "USER(908,30301,30300100)
+"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "mbdtire"
+  />
+<!-- MODEL.o_hub_velocity -->
+  <Post_Request
+     id                  = "70000014"
+     label               = "Hub from Ground Body(Hub velocity)"
+     comment             = "Hub from Ground Body(Hub velocity)"
+     type                = "MARKER_VELOCITY"
+     i_marker_id         = "30102022"
+     j_marker_id         = "30101020"
+     ref_marker_id       = "30101010"
+  />
+<!-- MODEL.o_hub_velocity -->
+  <Post_Request
+     id                  = "70000015"
+     label               = "Ground Body from Hub(Hub velocity)"
+     comment             = "Ground Body from Hub(Hub velocity)"
+     type                = "MARKER_VELOCITY"
+     i_marker_id         = "30101020"
+     j_marker_id         = "30102022"
+     ref_marker_id       = "30101010"
+  />
+<!-- MODEL.ts_AutoTire.o_rolling_states -->
+  <Post_Request
+     id                  = "70000007"
+     label               = "AutoTire - Radius OmegaActual OmegaFree"
+     comment             = "AutoTire - Radius OmegaActual OmegaFree"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,1,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_kinematics -->
+  <Post_Request
+     id                  = "70000008"
+     label               = "AutoTire - LonSlip LatSlip IncAngle (W-Axis system)"
+     comment             = "AutoTire - LonSlip LatSlip IncAngle (W-Axis system)"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,2,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_cp_forces -->
+  <Post_Request
+     id                  = "70000009"
+     label               = "AutoTire - Tire CP Forces (W-Axis system)"
+     comment             = "AutoTire - Tire CP Forces (W-Axis system)"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,3,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_cp_forces_sae -->
+  <Post_Request
+     id                  = "70000010"
+     label               = "AutoTire - Tire CP Forces (SAE-Axis system)"
+     comment             = "AutoTire - Tire CP Forces (SAE-Axis system)"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,4,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_kinematics_sae -->
+  <Post_Request
+     id                  = "70000011"
+     label               = "AutoTire - LonSlip LatSlip IncAngle (SAE-Axis system)"
+     comment             = "AutoTire - LonSlip LatSlip IncAngle (SAE-Axis system)"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,5,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_hub_forces -->
+  <Post_Request
+     id                  = "70000012"
+     label               = "AutoTire - Tire Hub Forces (C-Axis System)"
+     comment             = "AutoTire - Tire Hub Forces (C-Axis System)"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,6,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.o_cp_location -->
+  <Post_Request
+     id                  = "70000013"
+     label               = "AutoTire - Contact Patch Locations"
+     comment             = "AutoTire - Contact Patch Locations"
+     type                = "USERSUB"
+     usrsub_param_string = "USER(902,10,30301)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "reqsub"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_hub -->
+  <Post_Graphic
+     id                  = "90000"
+     label               = "Wheel Hub"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Hub"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000000"
+     top_radius          = "78.375"
+     bottom_radius       = "78.375"
+     length              = "10.25"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_1 -->
+  <Post_Graphic
+     id                  = "90001"
+     label               = "Wheel Spoke 1"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 1"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000001"
+     top_radius          = "31.35"
+     bottom_radius       = "9.405"
+     length              = "190.5"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_2 -->
+  <Post_Graphic
+     id                  = "90002"
+     label               = "Wheel Spoke 2"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 2"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000002"
+     top_radius          = "31.35"
+     bottom_radius       = "9.405"
+     length              = "190.5"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_3 -->
+  <Post_Graphic
+     id                  = "90003"
+     label               = "Wheel Spoke 3"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 3"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000003"
+     top_radius          = "31.35"
+     bottom_radius       = "9.405"
+     length              = "190.5"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_4 -->
+  <Post_Graphic
+     id                  = "90004"
+     label               = "Wheel Spoke 4"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 4"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000004"
+     top_radius          = "31.35"
+     bottom_radius       = "9.405"
+     length              = "190.5"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_spoke_5 -->
+  <Post_Graphic
+     id                  = "90005"
+     label               = "Wheel Spoke 5"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Spoke 5"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000005"
+     top_radius          = "31.35"
+     bottom_radius       = "9.405"
+     length              = "190.5"
+     ends_type           = "CLOSED"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_tread -->
+  <Post_Graphic
+     id                  = "90006"
+     label               = "Tire tread"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire tread"
+     color               = "64:62:64"
+     type                = "Frustum"
+     center_marker_id    = "90000006"
+     top_radius          = "313.5"
+     bottom_radius       = "313.5"
+     length              = "143.5"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_bead_inner -->
+  <Post_Graphic
+     id                  = "90007"
+     label               = "Tire bead inner"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire bead inner"
+     color               = "64:62:64"
+     type                = "Frustum"
+     center_marker_id    = "90000007"
+     top_radius          = "252."
+     bottom_radius       = "190.5"
+     length              = "-30.75"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_bead_outer -->
+  <Post_Graphic
+     id                  = "90008"
+     label               = "Tire bead outer"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire bead outer"
+     color               = "64:62:64"
+     type                = "Frustum"
+     center_marker_id    = "90000008"
+     top_radius          = "252."
+     bottom_radius       = "190.5"
+     length              = "30.75"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_sidewall_inner -->
+  <Post_Graphic
+     id                  = "90009"
+     label               = "Tire sidewall inner"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire sidewall inner"
+     color               = "64:62:64"
+     type                = "Frustum"
+     center_marker_id    = "90000009"
+     top_radius          = "252."
+     bottom_radius       = "313.5"
+     length              = "-30.75"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_sidewall_outer -->
+  <Post_Graphic
+     id                  = "90010"
+     label               = "Tire sidewall outer"
+     full_label          = "Model-AutoTire-Tire Graphics-Tire sidewall outer"
+     color               = "64:62:64"
+     type                = "Frustum"
+     center_marker_id    = "90000010"
+     top_radius          = "252."
+     bottom_radius       = "313.5"
+     length              = "30.75"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_rim -->
+  <Post_Graphic
+     id                  = "90011"
+     label               = "Wheel Rim"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Rim"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000011"
+     top_radius          = "190.5"
+     bottom_radius       = "190.5"
+     length              = "143.5"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_inner -->
+  <Post_Graphic
+     id                  = "90012"
+     label               = "Wheel Inner"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Inner"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000012"
+     top_radius          = "221.85"
+     bottom_radius       = "190.5"
+     length              = "-3.5875"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+<!-- MODEL.ts_AutoTire.gra_tire_geometry.gr_wheel_outer -->
+  <Post_Graphic
+     id                  = "90013"
+     label               = "Wheel Outer"
+     full_label          = "Model-AutoTire-Tire Graphics-Wheel Outer"
+     color               = "177:177:177"
+     type                = "Frustum"
+     center_marker_id    = "90000013"
+     top_radius          = "221.85"
+     bottom_radius       = "190.5"
+     length              = "3.5875"
+     ends_type           = "OPEN"
+     refinement_level    = "3"
+     is_material_inside  = "TRUE"
+  />
+  <Control_StateEqn
+     id                  = "304001"
+     type                = "USERSUB"
+     x_solver_array_id   = "30400200"
+     y_solver_array_id   = "30400300"
+     u_solver_array_id   = "30400100"
+     ic_solver_array_id  = "0"
+     num_state           = "5"
+     num_output          = "0"
+     usrsub_param_string = "USER(908,30301,30300100)"
+     usrsub_dll_name     = "mbdtire"
+     usrsub_fnc_name     = "GSESUB"
+     usrsub_der1_name    = "GSEXX"
+     usrsub_der2_name    = "GSEXU"
+     usrsub_der3_name    = "GSEYX"
+     usrsub_der4_name    = "GSEYU"
+     is_static_hold      = "FALSE"
+  />
+ </Model>
+ <Command>
+  <ResOutput
+     mrf_file            = "TRUE"
+     abf_file            = "TRUE"
+     plt_file            = "TRUE"
+     angle_type          = "YPR"
+     flex_vel_acc_output = "FALSE"
+     contact_gra_output  = "TRUE"
+     abf_unique_time     = "ALL"
+     plt_unique_time     = "ALL"
+     azero               = "1.0000E-10"
+     dzero               = "1.0000E-10"
+     fzero               = "1.0000E-10"
+     vzero               = "1.0000E-10"
+     req_comment_only    = "FALSE"
+     capture_max_pd      = "TRUE"
+     abf_yrequest_label  = "LABEL"
+  />
+  <H3DOutput
+     switch_on           = "TRUE"
+     increment           = "1"
+     format_option       = "AUTO"
+     stress_option       = "TENSOR"
+     strain_option       = "TENSOR"
+  />
+  <Simulate
+     analysis_type       = "Static"
+     end_time            = "0."
+  />
+  <Simulate
+     analysis_type       = "Transient"
+     end_time            = "2."
+     print_interval      = "0.1"
+  />
+ </Command>
+</MultiBodySystem>

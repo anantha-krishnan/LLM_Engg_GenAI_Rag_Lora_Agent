@@ -1,0 +1,184 @@
+//////////////////////////////////////////////////////////////////////
+ Altair HyperWorks
+
+ Version : HWVERSION_2025.1.0.14_Mar 21 2025_16:50:46
+
+ Model : Model
+
+ Customer ID : 
+
+ Date : Sun Nov  2 08:22:35 2025
+//////////////////////////////////////////////////////////////////////
+
+*BeginMDL( the_model, "Model", "2025.1.0.14" )
+
+  *StandardInclude(FILE)
+  *SetCurrentSolverMode(MotionSolve)
+  *LoadPreferenceFile(MBD-Vehicle Dynamics Tools)
+  *DefinitionInclude( "hwmv://autoent/definitions_mdl/sysDefTire.mdl" )
+  *Point( p_wheel_centre, "Wheel_Centre" )
+  *Body( b_hub, "Hub", p_wheel_centre, , , ,  )
+  *Marker( m_tire_ref, "Tire_reference", b_hub, p_wheel_centre )
+  *System( ts_AutoTire, "AutoTire", def_sys_tire, b_hub
+           , p_wheel_centre, m_tire_ref, m_0, MODEL.Global_Frame )
+  *DataSet( ds_inputs, "Inputs", def_ds_0 )
+  *Output( o_hub_velocity, "Hub velocity", VEL, b_hub.cg, b_hub, b_hub.cg, B_Ground, Global_Frame, BOTH_MARKERS )
+  *Template( tmplt_sim_ctrl, "Sim_ctrl", SOLVER_COMMAND, def_tmplt_0, ds_inputs )
+  *Point( p_0, "Point 0" )
+  *Marker( m_0, "Marker 0", B_Ground, p_0 )
+  *SetPoint( p_wheel_centre,             , , 295 )
+  *SetBodyInertia( b_hub,                      1, 1e3, 1e3, 1e3 )
+  *Set( b_hub.usecm, true )
+  *SetOption( DS_MotionSolve_Simopts.analysis_type,       "Static+Transient" )
+  *SetReal( DS_MotionSolve_Transient_Simopts.integr_tol,       0.001 )
+  *SetReal( DS_MotionSolve_Transient_Simopts.h_max,       0.001 )
+  *SetReal( DS_MotionSolve_Simopts.end_time,       2 )
+  *SetReal( DS_MotionSolve_Simopts.print_interval,       0.01 )
+  *SetOption( DS_MotionSolve_Simopts.plot_unique_time,       "ALL" )
+  *SetState( tmplt_sim_ctrl,             false )
+  *SetBodyIC( b_hub,                      ds_inputs.vel.value * 1000000 / 3600, 0, , , b_hub.vx/313.5 )
+  *SetBodyICFlag( b_hub,                      true, true, true, true, true, true )
+  *SetBoolean( DS_MotionSolve_Simopts.export_mdl_snapshot,       false )
+  *SetActiveAnalysis( ana__default )
+  *Set( p_wheel_centre.implicit.draw_graphic, true )
+  *Set( b_hub.implicit.draw_graphic, true )
+  *Set( m_tire_ref.implicit.draw_graphic, true )
+  *Set( p_0.implicit.draw_graphic, true )
+  *Set( m_0.implicit.draw_graphic, true )
+  *SetString( DS_MotionSolve_Simopts.run_name,       "SingleTire_Run" )
+  *SetReal( ds_inputs.vel,              20 )
+  *SetPoint( p_0,                        0, 0, 200 )
+  *DefineDataSet( def_ds_0 )
+    *Real( vel, "Velocity [kmph]", EDIT )
+  *EndDefine()
+  *DefineTemplate( def_tmplt_0, arg_inputs )
+{
+vel = arg_inputs.vel.value
+}  
+  <Simulate
+    analysis_type = "Static"
+    end_time = "0"
+  />
+<!--Solve velocity IC-->
+    <UserProgramControl
+       usrsub_param_string = "user(635, {Global_Frame.idstring},{vel},0,0)"
+       usrsub_dll_name     = "mbdtire"
+       usrsub_fnc_name     = "SETIC"
+  />
+  <UserProgramControl
+       usrsub_param_string = "user(635,{vel})"
+       usrsub_dll_name     = "mbdtire"
+       usrsub_fnc_name     = "SETWIC"
+  />
+  <Simulate
+    analysis_type = "Transient"
+    end_time = "2"
+    print_interval = "0.01"
+  />
+<stop/>
+  *EndDefine()
+
+  *BeginContext( ts_AutoTire )
+    *SetReal( ds_tire_properties.aspect_ratio,       0.6 )
+    *SetReal( ds_tire_properties.flex_tire_rimRad,       0 )
+    *SetReal( ds_tire_properties.flex_tire_rimWidth,       0 )
+    *SetString( ds_tire_properties.t_fnc_name,       `MBDTIRE::USER_FIALA` )
+    *SetFileName( ds_tire_properties.t_propertyFile,       "D:/Projects/Tires/camContact/sample_fiala_with_single_contact.tpf" )
+    *SetOption( ds_tire_properties.opt_TireType,       "USER" )
+    *SetBoolean( ds_tire_properties.isRdCompatible,       false )
+    *Set( p_whl_CM.implicit.draw_graphic, true )
+    *Set( p_rim_x_axis.implicit.draw_graphic, true )
+    *Set( p_rim_y_axis.implicit.draw_graphic, true )
+    *Set( p_rim_z_axis.implicit.draw_graphic, true )
+    *Set( m_wheelcm.implicit.draw_graphic, true )
+    *Set( m_rim_x_axis.implicit.draw_graphic, true )
+    *Set( m_rim_y_axis.implicit.draw_graphic, true )
+    *Set( m_rim_z_axis.implicit.draw_graphic, true )
+    *Set( m_I_marker.implicit.draw_graphic, true )
+    *Set( m_J_marker.implicit.draw_graphic, true )
+    *Set( b_wheel_part.implicit.draw_graphic, true )
+    *Set( j_fixed.implicit.draw_graphic, true )
+    *Set( gf_tire_force.implicit.draw_graphic, true )
+    *Set( v_spin_axis_gra.implicit.draw_graphic, true )
+    *SetString( ds_tire_properties.st_roadType,       `2D-FLAT` )
+    *SetFileName( ds_tire_properties.r_propertyFile,       "D:/Projects/Roads/2D_Flat.rdf" )
+
+    *BeginContext( sys_varsub )
+      *SetSolverVariable( sv_long_slip,               EXPR, , OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_long_slip,               true )
+      *SetLocalUserFunction( sv_long_slip,               "mbdtire" )
+      *SetSolverVariable( sv_long_slip,               USER, `USER(167, {arg_gforce.idstring}, 1)`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_slip_angle,              true )
+      *SetLocalUserFunction( sv_slip_angle,              "mbdtire" )
+      *SetSolverVariable( sv_slip_angle,              USER, `USER(167, {arg_gforce.idstring}, 2 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_camber_angle,            true )
+      *SetLocalUserFunction( sv_camber_angle,            "mbdtire" )
+      *SetSolverVariable( sv_camber_angle,            USER, `USER(167, {arg_gforce.idstring}, 3 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_cp_force_x,              true )
+      *SetSolverVariable( sv_cp_force_x,              USER, `USER(167, {arg_gforce.idstring}, 4 )`, OFF, 0.0, false, false )
+      *SetLocalUserFunction( sv_cp_force_x,              "mbdtire" )
+      *SetLocalUserDLLFlag( sv_cp_force_y,              true )
+      *SetLocalUserFunction( sv_cp_force_y,              "mbdtire" )
+      *SetSolverVariable( sv_cp_force_y,              USER, `USER(167, {arg_gforce.idstring}, 5 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_cp_force_z,              true )
+      *SetLocalUserFunction( sv_cp_force_z,              "mbdtire" )
+      *SetSolverVariable( sv_cp_force_z,              USER, `USER(167, {arg_gforce.idstring}, 6 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_cp_moment_x,             true )
+      *SetLocalUserFunction( sv_cp_moment_x,             "mbdtire" )
+      *SetSolverVariable( sv_cp_moment_x,             USER, `USER(167, {arg_gforce.idstring}, 7 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_cp_moment_y,             true )
+      *SetLocalUserFunction( sv_cp_moment_y,             "mbdtire" )
+      *SetSolverVariable( sv_cp_moment_y,             USER, `USER(167, {arg_gforce.idstring}, 8 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_cp_moment_z,             true )
+      *SetLocalUserFunction( sv_cp_moment_z,             "mbdtire" )
+      *SetSolverVariable( sv_cp_moment_z,             USER, `USER(167, {arg_gforce.idstring}, 9 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_rim_ang_vel,             true )
+      *SetLocalUserFunction( sv_rim_ang_vel,             "mbdtire" )
+      *SetSolverVariable( sv_rim_ang_vel,             USER, `USER(167, {arg_gforce.idstring}, 10 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_rim_long_vel,            true )
+      *SetLocalUserFunction( sv_rim_long_vel,            "mbdtire" )
+      *SetSolverVariable( sv_rim_long_vel,            USER, `USER(167, {arg_gforce.idstring}, 11 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_rim_vert_vel,            true )
+      *SetLocalUserFunction( sv_rim_vert_vel,            "mbdtire" )
+      *SetSolverVariable( sv_rim_vert_vel,            USER, `USER(167, {arg_gforce.idstring}, 12 )`, OFF, 0.0, false, false )
+      *SetLocalUserDLLFlag( sv_roll_rad,                true )
+      *SetSolverVariable( sv_roll_rad,                USER, `USER(167, {arg_gforce.idstring}, 13 )`, OFF, 0.0, false, false )
+      *SetLocalUserFunction( sv_roll_rad,                "mbdtire" )
+      *SetLocalUserDLLFlag( sv_cp_loc_x,                true )
+      *SetSolverVariable( sv_cp_loc_x,                USER, `USER(167, {arg_gforce.idstring}, 14 )`, OFF, 0.0, false, false )
+      *SetLocalUserFunction( sv_cp_loc_x,                "mbdtire" )
+      *SetLocalUserDLLFlag( sv_cp_loc_y,                true )
+      *SetSolverVariable( sv_cp_loc_y,                USER, `USER(167, {arg_gforce.idstring}, 15 )`, OFF, 0.0, false, false )
+      *SetLocalUserFunction( sv_cp_loc_y,                "mbdtire" )
+      *SetLocalUserDLLFlag( sv_cp_loc_z,                true )
+      *SetLocalUserFunction( sv_cp_loc_z,                "mbdtire" )
+      *SetSolverVariable( sv_cp_loc_z,                USER, `USER(167, {arg_gforce.idstring}, 16 )`, OFF, 0.0, false, false )
+    *EndContext()
+
+    *BeginContext( gra_tire_geometry )
+      *Set( p_hub_center.implicit.draw_graphic, true )
+      *Set( p_spoke_1.implicit.draw_graphic, true )
+      *Set( p_spoke_2.implicit.draw_graphic, true )
+      *Set( p_spoke_3.implicit.draw_graphic, true )
+      *Set( p_spoke_4.implicit.draw_graphic, true )
+      *Set( p_spoke_5.implicit.draw_graphic, true )
+      *Set( m_spoke_center.implicit.draw_graphic, true )
+      *Set( m_spkgra_align.implicit.draw_graphic, true )
+      *Set( gr_wheel_hub.draw_graphic, 1 )
+      *Set( gr_wheel_spoke_1.draw_graphic, 1 )
+      *Set( gr_wheel_spoke_2.draw_graphic, 1 )
+      *Set( gr_wheel_spoke_3.draw_graphic, 1 )
+      *Set( gr_wheel_spoke_4.draw_graphic, 1 )
+      *Set( gr_wheel_spoke_5.draw_graphic, 1 )
+      *Set( gr_tread.draw_graphic, 1 )
+      *Set( gr_bead_inner.draw_graphic, 1 )
+      *Set( gr_bead_outer.draw_graphic, 1 )
+      *Set( gr_sidewall_inner.draw_graphic, 1 )
+      *Set( gr_sidewall_outer.draw_graphic, 1 )
+      *Set( gr_wheel_rim.draw_graphic, 1 )
+      *Set( gr_wheel_inner.draw_graphic, 1 )
+      *Set( gr_wheel_outer.draw_graphic, 1 )
+    *EndContext()
+  *EndContext()
+*EndMDL()
+

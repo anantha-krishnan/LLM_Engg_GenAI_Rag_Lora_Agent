@@ -1,12 +1,15 @@
 # Neo4j Knowledge Graph Builder for MotionSolve XML Data
 
 from neo4j import GraphDatabase
+from neo4j.graph import Node, Relationship, Path as Neo4jPath
 from lxml import etree
-from pathlib import Path
+from pathlib import Path as pathlib_Path
 from typing import List, TypedDict, Generator, Optional, Any
 import pandas as pd
 import re
 import global_vars
+import openai
+
 # --- 1. NEO4J CONNECTION DETAILS ---
 NEO4J_URI = global_vars.NEO4J_URI
 NEO4J_USER = global_vars.NEO4J_USER
@@ -14,7 +17,7 @@ NEO4J_PASSWORD = global_vars.NEO4J_PASSWORD
 
 class Neo4jConnector:
     def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = GraphDatabase.driver(uri, auth=(user, password),notifications_min_severity="OFF")
 
     def close(self):
         self.driver.close()
@@ -23,11 +26,16 @@ class Neo4jConnector:
         """Retrieves the full property dictionary for a single node by name."""
         with self.driver.session() as session:
             result = session.run("MATCH (n {name: $name}) RETURN n", name=entity_name).single()
+            blacklist = {'embedding'}
             if result and result["n"]:
                 # Combine properties and labels for a complete picture
                 node_data = dict(result["n"])
-                node_data['_labels'] = list(result["n"].labels)
-                return node_data
+                clean_data = {
+                    k: v for k, v in node_data.items() 
+                    if k not in blacklist
+                }
+                clean_data['_labels'] = list(result["n"].labels)
+                return clean_data
             return None
         
     def entity_exists(self, entity_name: str) -> bool:
@@ -79,50 +87,6 @@ class Neo4jConnector:
             result = session.run(query)            
             return [{"name": record["name"], "type": record["type"]} for record in result]
 
-    def get_graph_schema(self) -> str:
-        """
-        Retrieves the schema of the graph, showing node labels and their relationships.
-        This version correctly handles the neo4j.graph.Node and Relationship objects.
-        """
-        print("\n--- CONNECTOR: Getting graph schema ---")
-        try:
-            query = "CALL db.schema.visualization()"
-            
-            with self.driver.session() as session:
-                result = session.run(query).single()
-                if not result:
-                    return "Could not retrieve schema. The database might be empty or the procedure failed."
-
-                nodes = result.get("nodes", [])
-                relationships = result.get("relationships", [])
-
-                schema_lines = ["--- Knowledge Graph Schema ---"]
-                
-                schema_lines.append("\n**Node Types (Labels):**")
-                for node_obj in nodes:
-                    # <<< FIX 1 & 2: Correctly handle the frozenset and filter 'Node' >>>
-                    primary_label = next((label for label in node_obj.labels if label != 'Node'), "Component")
-                    schema_lines.append(f"- {primary_label}")
-
-                schema_lines.append("\n**Relationship Types:**")
-                for rel_obj in relationships:
-                    # The result is a Relationship object with .start_node, .end_node, and .type
-                    start_node_labels = rel_obj.start_node.labels
-                    end_node_labels = rel_obj.end_node.labels
-                    
-                    start_label = next((label for label in start_node_labels if label != 'Node'), "Component")
-                    end_label = next((label for label in end_node_labels if label != 'Node'), "Component")
-                    rel_type = rel_obj.type
-                    
-                    schema_lines.append(f"- ({start_label})-[:{rel_type}]->({end_label})")
-                
-                formatted_schema = "\n".join(schema_lines)
-                print(formatted_schema)
-                return formatted_schema
-        except Exception as e:
-            print(f"Error getting schema: {e}")
-            return "An error occurred while fetching the graph schema. It may not be supported by your Neo4j version (requires 5.x+)."
-            
     def query(self, query: str, parameters: Optional[dict] = None) -> List[Any]:
         """Runs a query and returns the results."""
         with self.driver.session() as session:
@@ -130,144 +94,86 @@ class Neo4jConnector:
             return [record for record in result]
 
     def format_results_to_text(self, records: List[Any]) -> str:
-        """
-        [POC VERSION] Converts raw Neo4j query results into a clean string.
-        This version is designed for a Proof of Concept and will output the
-        FULL time-series data for OutputComponent nodes.
-        
-        WARNING: This can generate very large outputs for long simulations and may
-        exceed LLM token limits. Use with small datasets for initial testing.
-        """
         if not records:
-            return "No information found in the knowledge graph for the specified component."
+            return "No results found in the knowledge graph."
+        # Helper to format node
+        def fmt_node(n):
+            label = next((l for l in n.labels if l != 'Node'), "Entity")
+            name = n.get('name', 'Unnamed')
+            # Filter out heavy properties (embeddings/time-series) for the LLM
+            props = {k: v for k, v in dict(n).items() 
+                    if k not in ['embedding', 'output_values', 'time_values', 'parent_id'] 
+                    and not isinstance(v, list)}
+            return f"[{label}] '{name}'"
+        # Format relationship
+        def get_id(obj):
+            if hasattr(obj, 'element_id'): return str(obj.element_id)
+            if hasattr(obj, 'id'): return str(obj.id)
+            return str(obj)
+        
+        def process_item(value):
+            # --- 1. HANDLE PATHS (The "Story" logic) ---
+            if isinstance(value, Neo4jPath):
+                path_text = []
+                nodes = list(value.nodes)
+                rels = list(value.relationships)
 
-        lines = []
-        for record in records:
-            node = record.get("n", record.get("oc"))
-            neighbor = record.get("neighbor")
-            relationship = record.get("r")
+                for i in range(len(rels)):
+                    current_node  = nodes[i]
+                    rel = rels[i]
+                    next_node = nodes[i+1]
 
-            if node:
-                # --- POC CHANGE: Output FULL data for OutputComponent nodes ---
-                if "OutputComponent" in node.labels:
-                    component_name = node.get('name', 'N/A')
-                    lines.append(f"Output Component '{component_name}':")
                     
-                    time_vals = node.get('time_values', [])
-                    output_vals = node.get('output_values', [])
-                    
-                    if time_vals and output_vals:
-                        # Directly embed the full lists as strings into the context
-                        lines.append(f"  - Number of Data Points: {len(time_vals)}")
-                        lines.append(f"  - Time Values: {str(time_vals)}")
-                        lines.append(f"  - {component_name} Values: {str(output_vals)}")
+                    if get_id(rel.start_node) == get_id(current_node):
+                        arrow = f" --[:{rel.type}]--> "
                     else:
-                        lines.append("  - No time series data found.")
+                        arrow = f" <--[:{rel.type}]-- "
+                    if i == 0:
+                        path_text.append(fmt_node(current_node))
+                    path_text.append(arrow)
+                    path_text.append(fmt_node(next_node))
 
-                # --- logic for other nodes ---
-                elif 'name' in node:
-                    node_type = next(iter(node.labels - {'Node'}), "Component")
-                    lines.append(f"Component '{node['name']}' (Type: {node_type}):")
-                    properties_to_print = {k: v for k, v in dict(node).items() if not isinstance(v, list)}
-                    lines.append(f"  - Properties: {properties_to_print}")
+                output_strings.append("CHAIN: " + "".join(path_text))
 
-            if neighbor and relationship:
-                neighbor_name = neighbor.get('name', neighbor.get('component', 'Unnamed Component'))
-                neighbor_type = next(iter(neighbor.labels - {'Node'}), "Component")
-                lines.append(f"  - Is connected via '{relationship.type}' to '{neighbor_name}' (Type: {neighbor_type})")
+            # --- 2. HANDLE SINGLE NODES ---
+            elif isinstance(value, Node):
+                label = next((l for l in value.labels if l != 'Node'), "Entity")
+                name = value.get('name', 'Unnamed')
+                props = {k: v for k, v in dict(value).items() if k not in ['embedding', 'output_values', 'time_values']}
+                output_strings.append(f"NODE: [{label}] {name}")
+
+            # --- 3. HANDLE EVERYTHING ELSE ---
+            else:
+                output_strings.append(f"{value}")
+        output_strings = []
+
+        # --- MAIN LOOP ---
+        for record in records:
+            if isinstance(record, Neo4jPath):
+                output_strings.append(process_item(record))
+            
+            # Scenario B: record is a Node object
+            elif isinstance(record, Node):
+                output_strings.append(f"NODE: {fmt_node(record)}")
+
+            # Scenario C: record is a standard Neo4j Record (dict-like)
+            elif hasattr(record, 'keys'):
+                for key in record.keys():
+                    val = record[key]
+                    if isinstance(val, Neo4jPath):
+                        output_strings.append(process_item(val))
+                    elif isinstance(val, Node):
+                        output_strings.append(f"NODE: {fmt_node(val)}")
+                    else:
+                        output_strings.append(f"{key}: {val}")
+            
+            # Scenario D: record is a simple value
+            else:
+                output_strings.append(str(record))
 
         # Remove duplicates while preserving order
-        unique_lines = list(dict.fromkeys(lines))
-        return "\n".join(unique_lines)
-    def get_full_context_for_output(self, request_name: str) -> str:
-        """
-        [MARKER AWARE VERSION]
-        Performs a multi-hop query that respects the central role of Reference_Markers
-        to gather a complete "dossier" for root cause analysis.
-        """
-        
-        # This single, powerful query follows the true causal chain via marker IDs.
-        cypher_query = """
-        // 1. Find the PostRequest of interest by its name
-        MATCH (pr:PostRequest {name: $request_name})
-
-        // 2. Get its numerical output data (The Symptom)
-        OPTIONAL MATCH (pr)-[:HAS_COMPONENT]->(output:OutputComponent)
-
-        // 3. Find the Body that is being measured by tracing through the PostRequest's i_marker_id property
-        // This is the key step that follows the marker logic.
-        WITH pr, collect(DISTINCT output) as symptom_data
-        MATCH (body_of_interest:Body)<-[:HAS_MARKER]-(marker:Reference_Marker {ms_id: pr.measures_marker})
-
-        // 4. Now that we have the Body, find ALL joints connected to it.
-        // A joint is connected if it references ANY marker on that body.
-        WITH pr, body_of_interest, symptom_data
-        MATCH (body_of_interest)<-[:HAS_MARKER]-(any_marker_on_body:Reference_Marker)
-        MATCH (joint:Joint)
-        WHERE joint.i_marker_id = any_marker_on_body.ms_id OR joint.j_marker_id = any_marker_on_body.ms_id
-
-        // 5. Find any motions applied to THOSE joints (The Potential Cause)
-        OPTIONAL MATCH (motion:Motion)-[:APPLIED_TO]->(joint)
-
-        // Return all pieces of the puzzle for the dossier
-        RETURN pr,
-            body_of_interest,
-            symptom_data,
-            collect(DISTINCT joint) as connected_joints,
-            collect(DISTINCT motion) as joint_drivers
-        """
-        # --- TEMPORARY SCHEMA FIX (for this to work) ---
-        with self.driver.session() as session:
-            check = session.run("MATCH (m:Reference_Marker) RETURN count(m) as count").single()
-            if not check or check['count'] == 0:
-                print("\n!!! WARNING: :Reference_Marker nodes not found. Your ingestion script needs an update.")
-                print("This query will fail. Please update main_neo4j_importer.py with the Marker creation logic.\n")
-                return "ERROR: Graph schema is missing critical :Reference_Marker nodes. Please update the ingestion script."
-        # --- END SCHEMA FIX ---
-
-        with self.driver.session() as session:
-            result = session.run(cypher_query, request_name=request_name).single()
-
-            if not result or not result["body_of_interest"]:
-                return f"No complete causal chain found for PostRequest '{request_name}'."
-            
-            # Assemble the dossier from the rich query result
-            pr_node = result["pr"]
-            body_node = result["body_of_interest"]
-            symptom_nodes = result["symptom_data"]
-            joint_nodes = result["connected_joints"]
-            driver_nodes = result["joint_drivers"]
-            
-            pr_context = self.format_results_to_text([{'n': pr_node}])
-            body_context = self.format_results_to_text([{'n': body_node}])
-            symptom_context = self.format_results_to_text([{'n': node} for node in symptom_nodes])
-            joint_context = self.format_results_to_text([{'n': node} for node in joint_nodes])
-            driver_context = self.format_results_to_text([{'n': node} for node in driver_nodes])
-
-            full_dossier = f"""
-            ---
-            **Investigation Dossier for '{request_name}'**
-            ---
-            **0. ANALYSIS CONTEXT: The Output Request**
-            {pr_context}
-            ---
-            **1. SYMPTOM: Numerical Output Data**
-            {symptom_context if symptom_nodes else "No numerical output data found."}
-            ---
-            **2. PRIMARY COMPONENT: Measured Body**
-            This is the body exhibiting the behavior, identified via its marker.
-            {body_context}
-            ---
-            **3. STRUCTURAL PATH: Connected Joints**
-            These joints are connected to the Measured Body via one of its markers.
-            {joint_context if joint_nodes else "No joints found connected to this body."}
-            ---
-            **4. POTENTIAL DRIVERS: Motions/Forces on Joints**
-            These motions control the behavior of the connected joints. The root cause is likely an expression here.
-            {driver_context if driver_nodes else "No motions found applied to the connected joints."}
-            ---
-            """
-            return full_dossier
+        unique_output = list(dict.fromkeys(output_strings))
+        return "\n\n".join(unique_output)
 
     def get_dossier_for_any_entity(self, entity_name: str) -> str:
         """
@@ -320,63 +226,234 @@ class Neo4jConnector:
             full_dossier = "\n".join(filter(None, dossier_parts))
             
             return f"--- Dossier for '{entity_name}' ---\n{full_dossier}"
-    # In your Neo4jConnector class
-
+    
     def get_complete_schema_definition(self) -> str:
         """
-        Returns a manually defined, complete schema string representing ALL possible
-        nodes and relationships the importer can create. This is more robust than
-        relying on db.schema.visualization() which only shows existing data.
+        Dynamically fetches specific labels, properties, and relationships 
+        while filtering out the generic 'Node' noise.
         """
-        schema_string = """
-        --- Complete Knowledge Graph Schema ---
-
-        **Node Types (Labels):**
-        - Simulation: Contains global simulation settings.
-        - SolverSettings: Holds numerical solver parameters.
-        - Body: Represents a rigid body in the model.
-        - Reference_Marker: A coordinate system attached to a body.
-        - Joint: A constraint between two bodies.
-        - Motion: A prescribed motion applied to a joint.
-        - PostRequest: A request to output a specific measurement.
-        - OutputComponent: The numerical time-series results of a PostRequest.
-        - Force: A force element acting between bodies.
-        - AutoTireSystem: A special node representing a 'black-box' tire model.
-        - TirePropertyFile: Represents a .tpf file.
-        - RoadPropertyFile: Represents a .rdf file.
-        - StateEquation: The core logic/equations for a subsystem like a tire.
-        - StateVariable: An input variable to a StateEquation.
-
-        **Relationship Types:**
-        - (Reference_Marker)-[:HAS_MARKER]->(Body)
-        - (Body)-[:CONNECTS_TO]->(Joint)
-        - (Joint)-[:CONNECTS_TO]->(Body)
-        - (Motion)-[:APPLIED_TO]->(Joint)
-        - (PostRequest)-[:MEASURES]->(Body)
-        - (PostRequest)-[:RELATIVE_TO]->(Body)
-        - (PostRequest)-[:IN_FRAME_OF]->(Body)
-        - (PostRequest)-[:HAS_COMPONENT]->(OutputComponent)
-        - (PostRequest)-[:MEASURES_AUTOTIRE]->(AutoTireSystem)
-        - (Force)-[:APPLIES_TO]->(Body)
-        - (Force)-[:HAS_REACTION_ON]->(Body)
-        - (AutoTireSystem)-[:APPLIES_FORCE_VIA]->(Force)
-        - (AutoTireSystem)-[:DEFINED_BY]->(TirePropertyFile)
-        - (AutoTireSystem)-[:DEFINED_BY]->(RoadPropertyFile)
-        - (AutoTireSystem)-[:GOVERNED_BY]->(StateEquation)
-        - (StateEquation)-[:USES_INPUT]->(StateVariable)
-        - (StateVariable)-[:MEASURES_KINEMATICS_OF]->(Reference_Marker)
-        - (Component)-[:SOLVED_WITH]->(SolverSettings) [Note: 'Component' can be Body, Joint, Force]
-        - (Motion)-[:INFLUENCES]->(PostRequest)
-        - (StateVariable)-[:INFLUENCES]->(PostRequest)
-        - (AutoTireSystem)-[:INFLUENCES]->(PostRequest)
+        node_descriptions = {
+        "Simulation": "Contains global simulation settings.",
+        "SolverSettings": "Holds numerical solver parameters.",
+        "Body": "Represents a rigid body in the model.        ",
+        "Joint": "A constraint between two bodies.",
+        "Motion": "A prescribed motion applied to a joint.",
+        "PostRequest": "A request to output a specific measurement.",
+        "OutputComponent": "The numerical time-series results of a PostRequest.",
+        "Force": "A force element acting between bodies.",
+        "AutoTireSystem": "A special node representing a 'black-box' tire model.",
+        "StateEquation": "The core logic/equations for a subsystem like a tire."}
+        # Query 1: Clean Properties (Filtering out the generic 'Node' label)
+        prop_query = """
+        CALL db.schema.nodeTypeProperties() 
+        YIELD nodeLabels, propertyName
+        WITH [lbl IN nodeLabels WHERE lbl <> 'Node'][0] AS label, propertyName
+        WHERE label IS NOT NULL AND NOT propertyName IN ['time_values', 'output_values']
+        RETURN label, collect(propertyName) AS props
+        ORDER BY label
         """
-        return schema_string.strip()
+
+        # Query 2: Clean Relationships (How nodes are connected)
+        rel_query = """
+        CALL db.schema.visualization() YIELD relationships
+        UNWIND relationships AS rel
+        WITH startNode(rel) AS s, endNode(rel) AS e, type(rel) AS relType
+        RETURN DISTINCT 
+            [lbl IN labels(s) WHERE lbl <> 'Node'][0] AS source,
+            relType,
+            [lbl IN labels(e) WHERE lbl <> 'Node'][0] AS target
+        """
+
+        schema_output = ["--- DYNAMIC MBD GRAPH SCHEMA ---"]
+
+        with self.driver.session() as session:
+            # Process Properties
+            prop_results = session.run(prop_query)
+            schema_output.append("\n**Nodes/Entities and Attributes:**")
+            for rec in prop_results:
+                label = rec['label']
+                props = rec['props']
+                # Get description from our static map, or use a default
+                desc = node_descriptions.get(label, " ")
+                schema_output.append(f"- {label}: {desc} (Attributes: {props})")
+
+            # Process Relationships
+            rel_results = session.run(rel_query)
+            schema_output.append("\n**Model Connectivity (Edges):**")
+            for rec in rel_results:
+                schema_output.append(f"- ({rec['source']})-[:{rec['relType']}]->({rec['target']})")
+
+        # --- THE 'MBD Knowledge graph LAWS' ---
+        
+
+        schema_output.append("**1. Basic Kinematic Topology**"
+        "Bodies are connected to other bodies via Joints. Joints can also be connected directly to other Joints to form complex kinematic chains."
+        "   **Sample Query Logic:** To find connected bodies and their joints:"
+        "`MATCH (b1:Body)-[:CONNECTS_TO]->(j:Joint)-[:CONNECTS_TO]->(b2:Body) RETURN b1.name, j.name, j.type, b2.name`")
+
+        schema_output.append("**2. Tire System Core**"
+        "The `AutoTireSystem` node represents the physical tire entity. It does not contain equations itself but is **governed_by** `StateEquation` nodes which contain the differential equations defining the tire's states."
+        "   **Sample Query Logic:** To find the governing logic of a tire:"
+        "`MATCH (ats:AutoTireSystem)-[:GOVERNED_BY]->(se:StateEquation) RETURN ats.name, se.name, se.input_variable_details`")
+
+        schema_output.append("**3. Kinematic Inputs (State Variables)**"
+        "`StateEquation` nodes receive physical inputs (displacement, velocity, etc.) via kinematic measurements of a Body. While `StateVariable` nodes define these inputs, the graph links `StateEquation` directly to the measured `Body`. Technical details (IDs and call commands) are stored in the `input_variable_details` property."
+        "   **Sample Query Logic:** To find what kinematics drive a tire:"
+        "`MATCH (se:StateEquation)-[:MEASURES_INPUT]->(b:Body) RETURN se.name, se.input_variable_details, b.name`")
+
+        schema_output.append("**4. Tire Force Application**"
+        "The `AutoTireSystem` finally applies physical forces/moments to a `Body` through a `Force` node."
+        "   **Sample Query Logic:** To trace where tire forces are acting:"
+        "`MATCH (ats:AutoTireSystem)-[:APPLIES_FORCE_VIA]->(f:Force)-[:APPLIES_FORCE_TO]->(b:Body) RETURN ats.name, f.name, b.name`")
+
+        schema_output.append("**5. Output Analysis (PostRequests)**"
+        "`PostRequest` nodes measure the physical states of a `Body`. They contain `OutputComponent` nodes. There can be 1 to 6 components per request, each representing a specific kinematic or force/moment component ( Translational and Rotational)."
+        " Get all the components and check their names to find out which one you need"
+        "*   **Sample Query Logic:** To find vertical force (FZ) at a specific part:"
+        "`MATCH (pr:PostRequest)-[:HAS_COMPONENT]->(oc:OutputComponent) WHERE pr.name CONTAINS 'hub' RETURN pr.name, oc.name, oc.output_values`")
+
+        schema_output.append("**6. Fixed Joint Surrogate Logic (Expert Rule)**"
+        "If the target Body (B) lacks a direct `PostRequest`, search for a `Joint` of type **\"FIXED\"** connecting Body (B) to another Body (D). In MBD, measuring Body (D) is indirectly equivalent to measuring Body (B) because they move as a single rigid unit."
+        "*   **Query Logic:** To find a surrogate measurement point for a 'Hub':"
+        "`MATCH (b1:Body {name: 'Hub'})-[:CONNECTS_TO]-(j:Joint {type: 'FIXED'})-[:CONNECTS_TO]-(neighbor:Body) RETURN neighbor.name AS surrogate_body`")
+        return "\n".join(schema_output)
+    def get_full_graph(self)-> str:
+        """
+        Retrieves the entire graph as a list of Paths.
+        Each Path contains nodes and relationships.
+        """
+        with self.driver.session() as session:
+            query = """
+            MATCH p=()-[r]->()
+            RETURN p
+            """
+            result = session.run(query)
+            paths = [record["p"] for record in result]
+            details = []
+            for path in paths:
+                rel= path.relationships[0]
+                start_node = rel.start_node.get('name')
+                end_node = rel.end_node.get('name')
+                details.append(f"RELATIONSHIP: ({start_node})-[:{rel.type}]->({end_node})")
+            return details
+    def find_chains_between_nodes(self, node_names: list[str]) -> str:
+        query = """
+        MATCH (n) WHERE n.name IN $node_list
+        WITH collect(n) as nodes
+        UNWIND nodes as n1
+        UNWIND nodes as n2
+        WITH n1, n2 WHERE id(n1) < id(n2)
+        MATCH p = shortestPath((n1)-[*..15]-(n2))
+        RETURN p
+        """
+        with self.driver.session() as session:
+            records = session.run(query, node_list=node_names)
+            
+            # Step 1: Collect every unique relationship from ALL paths
+            unique_rels = {}
+            for record in records:
+                path = record['p']
+                for rel in path.relationships:
+                    # Use element_id or id as the unique key for the edge
+                    rel_id = getattr(rel, 'element_id', getattr(rel, 'id', None))
+                    if rel_id not in unique_rels:
+                        unique_rels[rel_id] = rel
+
+            if not unique_rels:
+                return "No connections found between these items."
+
+            # Step 2: Format these unique connections as a single "Master Model Structure"
+            output = ["--- MASTER MODEL SUBGRAPH ---"]
+            for rel in unique_rels.values():
+                s = rel.start_node
+                e = rel.end_node
+                s_fmt = f"[{list(s.labels)[0] if s.labels else 'Node'}] '{s.get('name')}'"
+                e_fmt = f"[{list(e.labels)[0] if e.labels else 'Node'}] '{e.get('name')}'"
+                output.append(f"{s_fmt} --[:{rel.type}]--> {e_fmt}")
+
+            return "\n".join(output),unique_rels
+    
+    def condense_paths(self, raw_paths: list) -> list:
+        """
+        Removes sub-paths (paths that are already contained within a longer path).
+        """
+        if not raw_paths:
+            return []
+
+        # 1. Convert Path objects to lists of IDs for easy comparison
+        def get_ids(p):
+            return [str(getattr(n, 'element_id', getattr(n, 'id', ''))) for n in p.nodes]
+
+        # 2. Sort paths by length, longest first
+        # This ensures we check if shorter paths are inside longer ones
+        sorted_paths = sorted(raw_paths, key=lambda x: len(x.nodes), reverse=True)
+        
+        master_paths = []
+        for path in sorted_paths:
+            ids = get_ids(path)
+            is_subset = False
+            
+            for master in master_paths:
+                master_ids = get_ids(master)
+                # Check if this path's ID sequence is a sub-sequence of a master path
+                # Example: [1, 2] is a sub-sequence of [0, 1, 2, 3]
+                if any(master_ids[j:j+len(ids)] == ids for j in range(len(master_ids) - len(ids) + 1)):
+                    is_subset = True
+                    break
+            
+            if not is_subset:
+                master_paths.append(path)
+                
+        return master_paths
+    def find_nodes_hybrid(self, keyword: str, mode="hybrid", top_k=3, openai_api_key=None):
+        """
+        Modes: 
+        - 'text': Uses Lucene Full-Text (Best for IDs/Technical names)
+        - 'vector': Uses OpenAI Embeddings (Best for synonyms/concepts)
+        - 'hybrid': Tries text first, falls back to vector if score is low
+        """
+        results = []
+        with self.driver.session() as session:
+            label_res = session.run("CALL db.labels()")
+            all_labels = [r["label"] for r in label_res if r["label"] != "Node"]
+        # --- MODE: FULL-TEXT SEARCH ---
+        if mode in ["text", "hybrid"]:
+            with self.driver.session() as session:
+                # The ~ provides fuzzy matching for typos
+                res = session.run("""
+                    CALL db.index.fulltext.queryNodes("node_names", $term) 
+                    YIELD node, score
+                    RETURN node.name as name, score, 'text' as method
+                    LIMIT $k
+                """, term=f"{keyword}~", k=top_k)
+                results.extend([dict(r) for r in res])
+
+        # --- MODE: VECTOR SEARCH ---
+        if mode in ["vector", "hybrid"]:
+            
+            client = openai.OpenAI()
+            embedding = client.embeddings.create(input=[keyword], model="text-embedding-3-small").data[0].embedding
+            for label in all_labels:
+                index_name = f"vector_{label.lower()}"
+                with self.driver.session() as session:
+                    res = session.run("""
+                        CALL db.index.vector.queryNodes($index_name, $k, $vec)
+                        YIELD node, score
+                        RETURN node.name as name, score, 'vector' as method
+                    """, index_name=index_name, k=top_k, vec=embedding)
+                    results.extend([dict(r) for r in res])
+
+        # Sort by score and return unique names
+        sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
+        return sorted_results[:2] if sorted_results else None
+
+ 
 class Neo4jUploader:
     """
     Handles the connection to Neo4j and the uploading of graph data.
     """
     def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = GraphDatabase.driver(uri, auth=(user, password),notifications_min_severity="OFF")
         self.force_comps = ['FX', 'FY', 'FZ', 'TX', 'TY', 'TZ', 'FM', 'TM']
         self.disp_comps = ['X','Y','Z','DX', 'DY', 'DZ', 'RX', 'RY', 'RZ', 'DM', 'RM', 'YAW', 'PITCH', 'ROLL']
         self.reqsub_cols=['f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']
@@ -399,17 +476,48 @@ class Neo4jUploader:
         self.pr={'Radius OmegaActual OmegaFree':self.rad_omegaact_omega,
                  'LonSlip LatSlip IncAngle (W-Axis system)':self.slip_inc,
                  'Tire CP Forces (W-Axis system)':self.cp_forces,
-                 'Contact Patch Locations':self.cp_locations}
+                 'Contact Patch Locations':self.cp_locations,
+                 'Tire Hub Forces (C-Axis System)': self.cp_forces}
 
     def close(self):
         self.driver.close()
 
     def clear_database(self):
-        """Wipes the entire database. Use with caution!"""
+        """Wipes the entire database, including data, constraints, and indexes."""
         with self.driver.session() as session:
-            print("Clearing the entire database...")
+            print("Clearing all data (Nodes/Relationships)...")
             session.run("MATCH (n) DETACH DELETE n")
-            print("Database cleared.")
+
+            # 1. Drop all Constraints first
+            # Dropping a constraint automatically drops its associated index.
+            print("Dropping all constraints...")
+            constraints = session.run("SHOW CONSTRAINTS YIELD name")
+            for record in constraints:
+                name = record["name"]
+                session.run(f"DROP CONSTRAINT {name} IF EXISTS")
+                print(f"  - Dropped constraint: {name}")
+
+            # 2. Drop remaining Indexes
+            # We only drop indexes that are NOT managed by constraints 
+            # (like your Full-Text and Vector indexes)
+            print("Dropping remaining indexes...")
+            indexes = session.run("SHOW INDEXES YIELD name, type")
+            for record in indexes:
+                name = record["name"]
+                idx_type = record["type"]
+                
+                # Skip built-in LOOKUP indexes (they start with 'index_' usually and are type 'LOOKUP')
+                if idx_type == 'LOOKUP':
+                    continue
+                    
+                try:
+                    session.run(f"DROP INDEX {name} IF EXISTS")
+                    print(f"  - Dropped index: {name}")
+                except Exception as e:
+                    # This captures cases where an index might be a system index we missed
+                    print(f"  - Could not drop index {name} (likely system-owned): {e}")
+
+            print("Database, constraints, and custom indexes cleared.")
 
     def create_constraints(self):
         """
@@ -436,7 +544,7 @@ class Neo4jUploader:
             else:
                 print("  - No old generic constraint on :Node(ms_id) found to drop.")
             
-            labels = ["Simulation", "Body", "Joint", "Motion", "PostRequest"]
+            labels = ["Simulation", "Body", "Joint", "Motion", "PostRequest","OutputComponent", "Force", "AutoTireSystem", "StateEquation"]
             for label in labels:                
                 query = f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.ms_id IS UNIQUE"
                 session.run(query)
@@ -484,7 +592,7 @@ class Neo4jUploader:
                     sim_props.update(transient_props)
 
                 session.run("""
-                    MERGE (s:Simulation:Node {ms_id: 'Simulation_Settings'})
+                    MERGE (s:Simulation {ms_id: 'Simulation_Settings'})
                     SET s += $props
                     """, props=sim_props)
                 print("  + Created Simulation node.")
@@ -515,31 +623,32 @@ class Neo4jUploader:
                 }
                 
                 session.run("""
-                    MERGE (b:Body:Node {ms_id: $ms_id})
+                    MERGE (b:Body {ms_id: $ms_id})
                     SET b += $props
                     """, ms_id=body_props['ms_id'], props=body_props)
             print(f"  + Processed {len(bodies)} Body nodes.")
 
             # --- Create Reference_Marker Nodes ---
             markers = root.findall('.//Model/Reference_Marker')
-            for marker in markers:
-                marker_props = {
-                    'ms_id': marker.get('id'),
-                    'name': marker.get('label'),
-                }
-                body_id = marker.get('body_id')
+            if (0):
+                for marker in markers:
+                    marker_props = {
+                        'ms_id': marker.get('id'),
+                        'name': marker.get('label'),
+                    }
+                    body_id = marker.get('body_id')
 
-                session.run("""
-                    // Create the marker itself
-                    MERGE (m:Reference_Marker:Node {ms_id: $ms_id})
-                    SET m += $props
-                    
-                    // Find its parent body and create the relationship
-                    WITH m
-                    MATCH (b:Body {ms_id: $body_id})
-                    MERGE (b)<-[:HAS_MARKER]-(m)
-                    """, ms_id=marker_props['ms_id'], props=marker_props, body_id=body_id)
-            print(f"  + Processed {len(markers)} Reference_Marker nodes and their connections to Bodies.")
+                    session.run("""
+                        // Create the marker itself
+                        MERGE (m:Reference_Marker {ms_id: $ms_id})
+                        SET m += $props
+                        
+                        // Find its parent body and create the relationship
+                        WITH m
+                        MATCH (b:Body {ms_id: $body_id})
+                        MERGE (b)<-[:HAS_MARKER]-(m)
+                        """, ms_id=marker_props['ms_id'], props=marker_props, body_id=body_id)
+                print(f"  + Processed {len(markers)} Reference_Marker nodes and their connections to Bodies.")
 
             # Helper dict to map markers to bodies
             marker_to_body = {m.get('id'): m.get('body_id') for m in root.findall('.//Model/Reference_Marker')}
@@ -555,7 +664,7 @@ class Neo4jUploader:
                     'j_marker_id': joint.get('j_marker_id')
                 }
                 session.run("""
-                    MERGE (j:Joint:Node {ms_id: $ms_id})
+                    MERGE (j:Joint {ms_id: $ms_id})
                     SET j += $props
                     """, ms_id=joint_props['ms_id'], props=joint_props)
 
@@ -587,7 +696,7 @@ class Neo4jUploader:
                 target_joint_id = motion.get('joint_id')
 
                 session.run("""
-                    MERGE (m:Motion:Node {ms_id: $ms_id})
+                    MERGE (m:Motion {ms_id: $ms_id})
                     SET m += $props
                     """, ms_id=motion_props['ms_id'], props=motion_props)
 
@@ -626,7 +735,7 @@ class Neo4jUploader:
 
                 # Create the AutoTireSystem node
                 session.run("""
-                    MERGE (ats:AutoTireSystem:Node {ms_id: $ms_id})
+                    MERGE (ats:AutoTireSystem {ms_id: $ms_id})
                     SET ats += $props
                 """, ms_id=system_id, props=tire_system_props)
 
@@ -640,14 +749,14 @@ class Neo4jUploader:
                     'ref_marker_id': force_element.get('ref_marker_id'),
                 }
                 session.run("""
-                    MERGE (f:Force:Node {ms_id: $ms_id})
+                    MERGE (f:Force {ms_id: $ms_id})
                     SET f += $props
                     // Link it to the parent AutoTireSystem
                     WITH f
                     MATCH (ats:AutoTireSystem {ms_id: $ats_id})
                     MERGE (ats)-[:APPLIES_FORCE_VIA]->(f)
                 """, ms_id=fvtb_props.get('ms_id'), props=fvtb_props, ats_id=system_id)
-
+                
                 # Link the Force to the bodies it acts upon
                 body_i_id = marker_to_body.get(fvtb_props.get('i_marker_id'))
                 body_j_id = marker_to_body.get(fvtb_props.get('j_floating_marker_id'))
@@ -667,65 +776,74 @@ class Neo4jUploader:
             
             # --- Create the StateEquation node and link it to the AutoTireSystem
             state_eqns = root.findall('.//Model/Control_StateEqn')
+
             for se in state_eqns:
                 param_string = se.get('usrsub_param_string', '')
-                # get the second USER(...) parameter which is the AutoTireSystem ID
                 match = re.search(r'USER\(\d+,\s*(\d+),', param_string)
                 if not match:
                     continue
                 system_id = match.group(1)
-                se_props = {
-                    'ms_id': se.get('id'),
-                    'name': f"State Equation for Tire {system_id}",
-                    'type': se.get('type'),
-                    'usrsub_param_string': se.get('usrsub_param_string'),
-                    'u_solver_array_id': se.get('u_solver_array_id')
-                }
-                session.run("""
-                    MERGE (cse:StateEquation:Node {ms_id: $ms_id})
-                    SET cse += $props
-                    // Link it to the parent AutoTireSystem
-                    WITH cse
-                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
-                    MERGE (ats)-[:GOVERNED_BY]->(cse)
-                """, ms_id=se_props.get('ms_id'), props=se_props, ats_id=system_id)
-                # --- 8. Process State Variables and link them to the State Equation ---
-                input_array_id = se_props['u_solver_array_id']
+                
+                # Track unique bodies to avoid redundant relationship calls
+                unique_body_ids = set()
+                # Track metadata for the LLM to read as a property
+                input_metadata = []
+
+                input_array_id = se.get('u_solver_array_id')
                 input_array_element = root.find(f'.//Model/Reference_Array[@id="{input_array_id}"]')
+                
                 if input_array_element is not None:
                     var_ids = input_array_element.text.strip().split()
                     for var_id in var_ids:
                         var_element = root.find(f'.//Model/Reference_Variable[@id="{var_id}"]')
                         if var_element is not None:
-                            var_props = {
-                                'ms_id': var_element.get('id'),
-                                'name': var_element.get('label'),
-                                'type': var_element.get('type'),                                
-                            }
-                            if var_props['type'] == 'EXPRESSION':
-                                var_props['expr'] = var_element.get('expr')
-                            elif var_props['type'] == 'USERSUB':
-                                var_props['usrsub_param_string'] = var_element.get('usrsub_param_string')
+                            expr = var_element.get('expr') or var_element.get('usrsub_param_string')
+                            m = re.search(r'(\w+)\((.*)\)', expr)
+                            if not m: continue
+                            
+                            call_cmd = m.group(1)
+                            call_args = m.group(2).split(',')
+                            
+                            m_id = None
+                            if var_element.get('type') == 'EXPRESSION':
+                                m_id = call_args[0].strip()
+                            else: # USERSUB
+                                dll = var_element.get('usrsub_dll_name')
+                                if dll == 'msautoutils': m_id = call_args[1].strip()
+                                elif dll == 'mbdtire': m_id = call_args[2].strip()
+                            
+                            if m_id:
+                                b_id = marker_to_body.get(m_id)
+                                if b_id:
+                                    unique_body_ids.add(b_id)
+                                    input_metadata.append(f"Var: {var_element.get('label')} (ID: {var_id}) measures {call_cmd} of Body {b_id}")
 
-                            session.run("""
-                                // Create the variable
-                                MERGE (sv:StateVariable:Node {ms_id: $ms_id})
-                                SET sv += $props
-                                
-                                // Link it to the state equation that uses it
-                                WITH sv
-                                MATCH (c:StateEquation {ms_id: $eqn_id})
-                                MERGE (c)-[:USES_INPUT]->(sv)
-                                """, ms_id=var_id, props=var_props, eqn_id=se_props['ms_id'])
-                                
-                            if var_props['type'] == 'USERSUB':
-                                marker_ids_in_expr = re.findall(r',(\d{8,})', var_props['usrsub_param_string'])
-                                for marker_id in marker_ids_in_expr:
-                                    session.run("""
-                                        MATCH (sv:StateVariable {ms_id: $var_id})
-                                        MATCH (m:Reference_Marker {ms_id: $marker_id})
-                                        MERGE (sv)-[:MEASURES_KINEMATICS_OF]->(m)
-                                    """, var_id=var_id, marker_id=marker_id)
+                # 1. MERGE the StateEquation and link to AutoTireSystem
+                # We store the detailed variable list as a property here.
+                se_props = {
+                    'ms_id': se.get('id'),
+                    'name': f"State Equation for Tire {system_id}",
+                    'input_variable_details': input_metadata, 
+                    'usrsub_param_string': se.get('usrsub_param_string')
+                }
+                
+                session.run("""
+                    MERGE (cse:StateEquation {ms_id: $ms_id})
+                    SET cse += $props
+                    WITH cse
+                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
+                    MERGE (ats)-[:GOVERNED_BY]->(cse)
+                """, ms_id=se_props['ms_id'], props=se_props, ats_id=system_id)
+
+                # 2. Create direct relationships to the Bodies measured
+                # We use UNWIND for a clean batch update of relationships
+                if unique_body_ids:
+                    session.run("""
+                        MATCH (cse:StateEquation {ms_id: $eqn_id})
+                        UNWIND $body_list AS b_id
+                        MATCH (b:Body {ms_id: b_id})
+                        MERGE (cse)-[:MEASURES_INPUT]->(b)
+                    """, eqn_id=se_props['ms_id'], body_list=list(unique_body_ids))
             # --- 5: Extract Output Requests with Full Context ---
             requests = root.findall('.//Model/Post_Request')
             for req in requests:
@@ -733,13 +851,11 @@ class Neo4jUploader:
                     'ms_id': req.get('id'),
                     'name': req.get('label'),
                     'measurement': req.get('type'),
-                    'measures_marker': req.get('i_marker_id'),
-                    'relative_to_marker': req.get('j_marker_id'),
-                    'in_frame_of_marker': req.get('ref_marker_id')
+                    #'measures_body_ms_id': marker_to_body.get(req.get('i_marker_id')),                    
                 }
                 
                 session.run("""
-                    MERGE (pr:PostRequest:Node {ms_id: $ms_id})
+                    MERGE (pr:PostRequest {ms_id: $ms_id})
                     SET pr += $props
                     """, ms_id=req_props['ms_id'], props=req_props)
                 if req.get('type') == 'USERSUB':
@@ -748,7 +864,7 @@ class Neo4jUploader:
                     session.run("""
                         MATCH (pr:PostRequest {ms_id: $ms_id})
                         MATCH (ats:AutoTireSystem {ms_id: $req_id})
-                        MERGE (pr)-[:MEASURES_AUTOTIRE]->(ats)
+                        MERGE (pr)-[:MEASURES_OUTPUT {type: 'AutoTireSystem'}]->(ats)
                     """, ms_id=req_props['ms_id'], req_id=req_props['measures_autotire'])
                 else:
                     body_i = marker_to_body.get(req.get('i_marker_id'))
@@ -759,15 +875,15 @@ class Neo4jUploader:
                         session.run("""
                             MATCH (pr:PostRequest {ms_id: $req_id})
                             MATCH (b:Body {ms_id: $body_id})
-                            MERGE (pr)-[:MEASURES {type: $req_type}]->(b)
+                            MERGE (pr)-[:MEASURES_OUTPUT {type: $req_type}]->(b)
                             """, req_id=req.get('id'), body_id=body_i, req_type=req.get('type'))
-                    if body_j:
+                    if 0 and body_j:
                         session.run("""
                             MATCH (pr:PostRequest {ms_id: $req_id})
                             MATCH (b:Body {ms_id: $body_id})
                             MERGE (pr)-[:RELATIVE_TO]->(b)
                             """, req_id=req.get('id'), body_id=body_j)
-                    if body_ref:
+                    if 0 and body_ref:
                         session.run("""
                             MATCH (pr:PostRequest {ms_id: $req_id})
                             MATCH (b:Body {ms_id: $body_id})
@@ -777,7 +893,7 @@ class Neo4jUploader:
             print(f"  + Processed {len(requests)} PostRequest nodes and their connections.")
             print("--- Import Finished ---")
 
-    def upload_simulation_results(self, results_directory: Path):
+    def upload_simulation_results(self, results_directory: pathlib_Path):
         """
         Scans for PostRequest nodes, finds corresponding CSVs in the given
         directory, and uploads all components in a single batch per file.
@@ -881,91 +997,59 @@ class Neo4jUploader:
 
         print("--- Multi-Component Results Import Finished ---")
 
-    def create_summary_relationships(self):
-        """
-        Creates high-level "shortcut" relationships like [:INFLUENCES]
-        for both Motion-driven and Tire-driven systems, enriching them
-        with properties describing the causal path.
-        """
+    def create_hybrid_indexes(self):
+        self.client = openai.OpenAI()
+        
         with self.driver.session() as session:
-            print("\n--- Creating Enriched Summary Relationships for Analysis ---")
-
-            # --- Query 1: For standard Motion -> Joint -> Body -> PostRequest paths (Unchanged) ---
-            motion_query = """
-            MATCH (motion:Motion)-[:APPLIED_TO]->(joint:Joint)-[:CONNECTS_TO*1..2]->(body:Body)
-            MATCH (pr:PostRequest)-[:MEASURES]->(body)
-            WITH motion, pr,
-                collect(DISTINCT joint.name) as via_joint_names,
-                collect(DISTINCT body.name) as on_body_names
-            MERGE (motion)-[r:INFLUENCES]->(pr)
-            SET r.via_joint_names = via_joint_names,
-                r.on_body_names = on_body_names,
-                r.reason = "Motion influences this PostRequest via the listed joints and bodies."
-            """
-            result_motion = session.run(motion_query).consume()
-            print(f"  + Created/Updated {result_motion.counters.relationships_created} Motion-driven [:INFLUENCES] relationships.")
-
-            # --- Query 2: <<< ENHANCED FOR TIRE SYSTEM PATH DETAILS >>> ---
-            tire_query = """
-            // 1. Start from the input StateVariable and find its full chain
-            MATCH (sv:StateVariable)<-[:USES_INPUT]-(se:StateEquation)<-[:GOVERNED_BY]-(ats:AutoTireSystem)
-            MATCH (ats)-[:APPLIES_FORCE_VIA]->(force:Force)-[:APPLIES_FORCE_TO]->(tireforcebody:Body)
+            # 1. Get all unique labels in the graph dynamically
+            # We filter out 'Node' because it's your generic base label
+            label_result = session.run("CALL db.labels()")
+            all_labels = [record["label"] for record in label_result if record["label"] != "Node"]
             
-            // 2. Find the PostRequests that are influenced by this Tire System
-            MATCH (ats)<-[:MEASURES_AUTOTIRE]-(pr:PostRequest)
+            # 2. Create Dynamic Full-Text Index (supports all labels in one)
+            labels_pipe = "|".join(all_labels)
+            session.run(f"""
+                CREATE FULLTEXT INDEX node_names FOR (n:{labels_pipe}) 
+                ON EACH [n.name]
+            """)
 
-            // 3. Find the body being measured by the State Variable
-            MATCH (sv)-[:MEASURES_KINEMATICS_OF]->(:Reference_Marker)-[:HAS_MARKER]->(body:Body)
+            # 3. Create Dynamic Vector Indexes (one per label)
+            for label in all_labels:
+                index_name = f"vector_{label.lower()}"
+                session.run(f"""
+                    CREATE VECTOR INDEX {index_name}
+                    FOR (n:{label}) ON (n.embedding)
+                    OPTIONS {{indexConfig: {{
+                    `vector.dimensions`: 1536,
+                    `vector.similarity_function`: 'cosine'
+                    }}}}
+                """)
+            
 
-            // 4. Group by the start and end points (sv, pr) and collect path details
-            WITH sv, pr,
-                collect(DISTINCT body.name) as measured_bodies,
-                collect(DISTINCT se.name) as via_state_equations,
-                collect(DISTINCT ats.name) as via_tire_systems,
-                collect(DISTINCT force.name) as resulting_in_forces,
-                collect(DISTINCT tireforcebody.name) as affected_bodies
-
-            // 5. Create the enriched INFLUENCES relationship
-            MERGE (sv)-[r:INFLUENCES]->(pr)
-            SET r.reason = "This kinematic variable is an input to a tire state equation. The resulting tire force influences this post-request output.",
-                r.measured_bodies = measured_bodies,
-                r.via_state_equations = via_state_equations,
-                r.via_tire_systems = via_tire_systems,
-                r.resulting_in_forces = resulting_in_forces,
-                r.affected_bodies = affected_bodies
-            """
-            result_tire = session.run(tire_query).consume()
-            print(f"  + Created/Updated {result_tire.counters.relationships_created} Tire input-driven [:INFLUENCES] relationships with full path details.")
-
-    def create_tire_force_summary(self):
-        """
-        Creates high-level "shortcut" relationships for Tire Forces.
+            # 4. Vectorize nodes (same as before)
+            nodes = session.run("MATCH (n) WHERE n.embedding IS NULL AND n.name IS NOT NULL RETURN n.name as name, id(n) as id")
+            for record in nodes:
+                name = record['name']
+                node_id = record['id']
+                embedding = self.client.embeddings.create(input=[name], model="text-embedding-3-small").data[0].embedding
+                session.run("MATCH (n) WHERE id(n) = $id SET n.embedding = $embedding", id=node_id, embedding=embedding)
+    def normalize_node_names(self):
+        """Converts all node 'name' properties to lowercase."""
+        query = """
+        MATCH (n)
+        WHERE n.name IS NOT NULL
+        SET n.name = toLower(n.name)
         """
         with self.driver.session() as session:
-            print("\n--- Creating Tire Force Summary Relationships ---")
-
-            query = """
-            MATCH (ats:AutoTireSystem)-[:APPLIES_FORCE_VIA]->(force:Force)-[:APPLIES_FORCE_TO]->(body:Body)
-            MATCH (pr:PostRequest)-[:MEASURES_AUTOTIRE]->(ats)
-            MATCH (ats)-[:GOVERNED_BY]->(se:StateEquation)
-            WITH ats, pr, se, force, body
-            // Create the summary relationship
-            MERGE (ats)-[r:INFLUENCES]->(pr)
-            SET r.reason = "The effects of the Force/Moment from AutoTireSystem is measured by this PostRequest.",
-                r.governed_by_state_equation = se.ms_id,
-                r.tire_force_id= force.ms_id,
-                r.applies_to_body_id = body.ms_id
-            """
-            result = session.run(query)
-            summary = result.consume()
-            print(f"  + Created/Updated {summary.counters.relationships_created} [:APPLIES_TIRE_FORCE_TO] relationships.")
-  
+            print("Normalizing all node names to lowercase...")
+            session.run(query)
+            print("Normalization complete.")
 if __name__ == "__main__":
-    script_dir = Path(__file__).parent
-    data_dir = script_dir / ".."/"../" / "Pdata"
+    script_dir = pathlib_Path(__file__).parent
+    data_dir = script_dir / ".."/"../" /"../"/ "Pdata"
     data_dir_sub = data_dir / "TestRig"
     XML_FILE = data_dir_sub / "SingleTire_Run.xml"
-    create_db = False
+    create_db = True
 
     if not XML_FILE.exists():
         print(f"Error: XML file not found at {XML_FILE}")
@@ -977,12 +1061,17 @@ if __name__ == "__main__":
             uploader.create_constraints()
             uploader.upload_graph_from_xml(XML_FILE)
             uploader.upload_simulation_results(data_dir_sub)
-            uploader.create_summary_relationships() 
+            uploader.create_hybrid_indexes()
+            uploader.normalize_node_names()
+            uploader.close()
+            #uploader.create_summary_relationships() 
         connector = Neo4jConnector(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+        #print(connector.get_full_graph())
 
-        #all_nodes_with_types = connector.get_dossier_for_any_entity('OmegaActual')
-        #all_nodes_with_types = connector.get_all_nodes_with_primary_type()
+        all_nodes_with_types = connector.get_dossier_for_any_entity('OmegaActual')
+        all_nodes_with_types = connector.get_all_nodes_with_primary_type()
         s = connector.get_nodes_by_type('PostRequest')
-        uploader.close()
+        connector.close()
+
+        
         print("\nData successfully uploaded to Neo4j.")
-        print("You can now explore the graph in the Neo4j Browser.")
