@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
 import scipy as sp
+import matplotlib.pyplot as plt
 import io
+from contextlib import redirect_stdout
 import sys
 from thefuzz import process
 from langchain_community.document_loaders import WebBaseLoader
@@ -16,22 +18,27 @@ class ToolBelt:
     def run_python_analysis(self, cypher_query: str, python_code: str) -> str:
         """Executes Cypher to get data, then runs engineering Python code."""
         try:
+            print(f"\033[93m--- TOOL: run_python_analysis ' ---\033[0m")
             raw_results = self.neo4j_connector.query(cypher_query)
             if not raw_results:
                 return "Error: Cypher query returned no data."
-            print(f"\033[93m--- TOOL: run_python_analysis ' ---\033[0m")
             
-            df = pd.DataFrame(raw_results)
-            local_vars = {"df": df, "np": np, "pd": pd, "sp": sp}
+            df = pd.DataFrame(raw_results[0].data())
+            safe_globals = {"__builtins__": __builtins__} 
+            local_scope = {"df": df, "np": np, "pd": pd, "sp": sp}
             stdout_capture = io.StringIO()
             
-            sys.stdout = stdout_capture
             try:
-                exec(python_code, globals(), local_vars)
-            finally:
-                sys.stdout = sys.__stdout__
+                with redirect_stdout(stdout_capture):
+                    exec(python_code, safe_globals, local_scope)
+                
+                # This is your final analysis string!
+                analysis_result = stdout_capture.getvalue()
 
-            return f"Analysis Result:\n{stdout_capture.getvalue()}"
+            except Exception as e:
+                analysis_result = f"Simulation analysis failed with error: {str(e)}"
+
+            return f"Analysis Result:\n{analysis_result}"
         except Exception as e:
             return f"Error: {str(e)}"
 

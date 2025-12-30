@@ -18,6 +18,7 @@ NEO4J_PASSWORD = global_vars.NEO4J_PASSWORD
 class Neo4jConnector:
     def __init__(self, uri, user, password):
         self.driver = GraphDatabase.driver(uri, auth=(user, password),notifications_min_severity="OFF")
+        self.blacklist = {'embedding'}
 
     def close(self):
         self.driver.close()
@@ -26,13 +27,12 @@ class Neo4jConnector:
         """Retrieves the full property dictionary for a single node by name."""
         with self.driver.session() as session:
             result = session.run("MATCH (n {name: $name}) RETURN n", name=entity_name).single()
-            blacklist = {'embedding'}
             if result and result["n"]:
                 # Combine properties and labels for a complete picture
                 node_data = dict(result["n"])
                 clean_data = {
                     k: v for k, v in node_data.items() 
-                    if k not in blacklist
+                    if k not in self.blacklist
                 }
                 clean_data['_labels'] = list(result["n"].labels)
                 return clean_data
@@ -240,9 +240,8 @@ class Neo4jConnector:
         "Motion": "A prescribed motion applied to a joint.",
         "PostRequest": "A request to output a specific measurement.",
         "OutputComponent": "The numerical time-series results of a PostRequest.",
-        "Force": "A force element acting between bodies.",
-        "AutoTireSystem": "A special node representing a 'black-box' tire model.",
-        "StateEquation": "The core logic/equations for a subsystem like a tire."}
+        "Force": "A force element acting between bodies.",        
+        "StateEquation": "Control state equations for a subsystem like a tire."}
         # Query 1: Clean Properties (Filtering out the generic 'Node' label)
         prop_query = """
         CALL db.schema.nodeTypeProperties() 
@@ -292,19 +291,19 @@ class Neo4jConnector:
         "`MATCH (b1:Body)-[:CONNECTS_TO]->(j:Joint)-[:CONNECTS_TO]->(b2:Body) RETURN b1.name, j.name, j.type, b2.name`")
 
         schema_output.append("**2. Tire System Core**"
-        "The `AutoTireSystem` node represents the physical tire entity. It does not contain equations itself but is **governed_by** `StateEquation` nodes which contain the differential equations defining the tire's states."
+        "The `StateEquation` node represents the physical tire entity. It contains the differential equations defining the tire's states."
         "   **Sample Query Logic:** To find the governing logic of a tire:"
-        "`MATCH (ats:AutoTireSystem)-[:GOVERNED_BY]->(se:StateEquation) RETURN ats.name, se.name, se.input_variable_details`")
+        "`MATCH (se:StateEquation) RETURN se.name, se.input_variable_details`")
 
         schema_output.append("**3. Kinematic Inputs (State Variables)**"
-        "`StateEquation` nodes receive physical inputs (displacement, velocity, etc.) via kinematic measurements of a Body. While `StateVariable` nodes define these inputs, the graph links `StateEquation` directly to the measured `Body`. Technical details (IDs and call commands) are stored in the `input_variable_details` property."
+        "`StateEquation` nodes receive physical inputs (displacement, velocity, etc.) via kinematic measurements of a Body. StateVariables define these inputs from a measured Body. The graph links `StateEquation` directly to the measured `Body`. Technical details (IDs and call commands) are stored in the `input_variable_details` property."
         "   **Sample Query Logic:** To find what kinematics drive a tire:"
         "`MATCH (se:StateEquation)-[:MEASURES_INPUT]->(b:Body) RETURN se.name, se.input_variable_details, b.name`")
 
         schema_output.append("**4. Tire Force Application**"
-        "The `AutoTireSystem` finally applies physical forces/moments to a `Body` through a `Force` node."
+        "The `StateEquation` finally applies physical forces/moments to a `Body` through a `Force` node."
         "   **Sample Query Logic:** To trace where tire forces are acting:"
-        "`MATCH (ats:AutoTireSystem)-[:APPLIES_FORCE_VIA]->(f:Force)-[:APPLIES_FORCE_TO]->(b:Body) RETURN ats.name, f.name, b.name`")
+        "`MATCH (se:StateEquation)-[:APPLIES_FORCE_VIA]->(f:Force)-[:APPLIES_FORCE_TO]->(b:Body) RETURN se.name, f.name, b.name`")
 
         schema_output.append("**5. Output Analysis (PostRequests)**"
         "`PostRequest` nodes measure the physical states of a `Body`. They contain `OutputComponent` nodes. There can be 1 to 6 components per request, each representing a specific kinematic or force/moment component ( Translational and Rotational)."
@@ -544,7 +543,7 @@ class Neo4jUploader:
             else:
                 print("  - No old generic constraint on :Node(ms_id) found to drop.")
             
-            labels = ["Simulation", "Body", "Joint", "Motion", "PostRequest","OutputComponent", "Force", "AutoTireSystem", "StateEquation"]
+            labels = ["Simulation", "Body", "Joint", "Motion", "PostRequest","OutputComponent", "Force", "StateEquation"]
             for label in labels:                
                 query = f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.ms_id IS UNIQUE"
                 session.run(query)
@@ -719,11 +718,10 @@ class Neo4jUploader:
                 
                 system_id = match.group(1)
                 if system_id not in tire_system_nodes:
-                    tire_system_props = {
-                        'ms_id': system_id,
-                        'name': f'AutoTireSystem_{system_id}',
-                    }
+                    tire_system_nodes[system_id] = force_element.get('id')
+                        
                 # Find the associated TPF and RDF files using the unique string labels from the XML
+                """
                 tpf_element = root.find('.//Model/Reference_String[@label="tire property file string"]')
                 rdf_element = root.find('.//Model/Reference_String[@label="road property file string"]')
                 if tpf_element is not None:
@@ -732,17 +730,17 @@ class Neo4jUploader:
                     tire_system_props['road_file_path'] = rdf_element.get('string')
                     
                     tire_system_nodes[system_id] = tire_system_props
-
+                """
                 # Create the AutoTireSystem node
-                session.run("""
-                    MERGE (ats:AutoTireSystem {ms_id: $ms_id})
-                    SET ats += $props
-                """, ms_id=system_id, props=tire_system_props)
+                #session.run("""
+                #    MERGE (ats:AutoTireSystem {ms_id: $ms_id})
+                #    SET ats += $props
+                #""", ms_id=system_id, props=tire_system_props)
 
                 # Create the Force node and link it to the AutoTireSystem
                 fvtb_props = {
                     'ms_id': force_element.get('id'),
-                    'name': force_element.get('label')+f"_{force_element.get('id')}",
+                    'name': force_element.get('label'),
                     'type': force_element.get('type'),
                     'i_marker_id': force_element.get('i_marker_id'),
                     'j_floating_marker_id': force_element.get('j_floating_marker_id'),
@@ -751,11 +749,7 @@ class Neo4jUploader:
                 session.run("""
                     MERGE (f:Force {ms_id: $ms_id})
                     SET f += $props
-                    // Link it to the parent AutoTireSystem
-                    WITH f
-                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
-                    MERGE (ats)-[:APPLIES_FORCE_VIA]->(f)
-                """, ms_id=fvtb_props.get('ms_id'), props=fvtb_props, ats_id=system_id)
+                """, ms_id=fvtb_props.get('ms_id'), props=fvtb_props)#, ats_id=system_id
                 
                 # Link the Force to the bodies it acts upon
                 body_i_id = marker_to_body.get(fvtb_props.get('i_marker_id'))
@@ -821,19 +815,16 @@ class Neo4jUploader:
                 # 1. MERGE the StateEquation and link to AutoTireSystem
                 # We store the detailed variable list as a property here.
                 se_props = {
-                    'ms_id': se.get('id'),
-                    'name': f"State Equation for Tire {system_id}",
+                    'ms_id': system_id,
+                    'name': f"Control State Equation for Tire {system_id}",
                     'input_variable_details': input_metadata, 
                     'usrsub_param_string': se.get('usrsub_param_string')
                 }
                 
                 session.run("""
                     MERGE (cse:StateEquation {ms_id: $ms_id})
-                    SET cse += $props
-                    WITH cse
-                    MATCH (ats:AutoTireSystem {ms_id: $ats_id})
-                    MERGE (ats)-[:GOVERNED_BY]->(cse)
-                """, ms_id=se_props['ms_id'], props=se_props, ats_id=system_id)
+                    SET cse += $props                    
+                """, ms_id=se_props['ms_id'], props=se_props)
 
                 # 2. Create direct relationships to the Bodies measured
                 # We use UNWIND for a clean batch update of relationships
@@ -844,6 +835,15 @@ class Neo4jUploader:
                         MATCH (b:Body {ms_id: b_id})
                         MERGE (cse)-[:MEASURES_INPUT]->(b)
                     """, eqn_id=se_props['ms_id'], body_list=list(unique_body_ids))
+                
+                # 3. Link the StateEquation to the Force_Vector_TwoBody
+                session.run("""
+                    MATCH (cse:StateEquation {ms_id: $eqn_id})                    
+                    WITH cse
+                    MATCH (fv:Force {ms_id: $fv_id})
+                    MERGE (cse)-[:APPLIES_FORCE_VIA]->(fv)
+                """, eqn_id=se_props['ms_id'], fv_id=tire_system_nodes[se_props['ms_id']])
+                
             # --- 5: Extract Output Requests with Full Context ---
             requests = root.findall('.//Model/Post_Request')
             for req in requests:
@@ -863,8 +863,8 @@ class Neo4jUploader:
                     req_props['measures_autotire'] = re.findall(r'USER\((.*?)\)', req.get('usrsub_param_string'))[0].split(',')[2].strip()
                     session.run("""
                         MATCH (pr:PostRequest {ms_id: $ms_id})
-                        MATCH (ats:AutoTireSystem {ms_id: $req_id})
-                        MERGE (pr)-[:MEASURES_OUTPUT {type: 'AutoTireSystem'}]->(ats)
+                        MATCH (cse:StateEquation {ms_id: $req_id})
+                        MERGE (pr)-[:MEASURES_OUTPUT {type: 'AutoTireSystem'}]->(cse)
                     """, ms_id=req_props['ms_id'], req_id=req_props['measures_autotire'])
                 else:
                     body_i = marker_to_body.get(req.get('i_marker_id'))
