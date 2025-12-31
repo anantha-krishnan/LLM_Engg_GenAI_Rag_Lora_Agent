@@ -1,4 +1,4 @@
-import operator
+import operator, re
 from typing import List, TypedDict, Annotated, Dict, Optional,Generator
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage
@@ -8,19 +8,37 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.output_parsers import StrOutputParser,JsonOutputParser
 import json
-
+from typing import Annotated, List, Union, Optional
+import base64
 from agent_tools_2 import ToolBelt
 from pathlib import Path
 import global_vars
+
+def reduce_past_steps(current: List[str], update: Union[List[str], str, None]) -> List[str]:
+    # 1. If we receive None, we reset to a blank list
+    if update is None:
+        return []
+    
+    # 2. If the update is a string (single step), make it a list
+    if isinstance(update, str):
+        update = [update]
+    
+    # 3. Standard Append logic (same as operator.add)
+    return current + update
+
 # --- STATE DEFINITION ---
 class ExecutionState(TypedDict):
     goal: str
+    hypothesis: str
     plan: List[str]
-    past_steps: Annotated[List[str], operator.add]
-    discovered_entities: Dict[str, str] # CRITICAL: Stores {"hub": "Hub_Body_01"}
+    past_steps: Annotated[List[str], reduce_past_steps]
+    #discovered_entities: Dict[str, str] # CRITICAL: Stores {"hub": "Hub_Body_01"}
     iteration_count: int
     final_answer: str
     next_step: Optional[str]
+    next_action: str # to continue or replan
+    last_plot: Optional[str]
+    schema: str
 
     
 class ActionStepExecutorAnalyst:
@@ -32,16 +50,15 @@ class ActionStepExecutorAnalyst:
         self.state = None
         self.node_dossiers = {}
         self.chain_txt = ""
-    def _planner_node(self, state: ExecutionState) -> dict:
-        print(f"\n[PLANNER] Iteration {state['iteration_count']}")
-        dead_loop = False
-        if len(state["past_steps"]) > 2:
-            last_two = state["past_steps"][-2:]
-            if last_two[0] == last_two[1]:
-                print("!!! LOOP DETECTED - FORCING STRATEGY SHIFT !!!")
-                dead_loop = True
+        # join the found  nodes into a one list
+        self.all_found_nodes =[]
+        self.mermaid_code = ""
+
+    def _data_extractor_for_planner_node(self, state: ExecutionState) -> dict:
+        print(f"\n[DATA EXTRACTOR] Iteration {state['iteration_count']}")
         schema = self.neo4j_connector.get_complete_schema_definition()
         all_nodes = self.tool_belt.list_all_nodes()
+        print(f"[DATA EXTRACTOR] Extracting Nodes from User Goal...")
         keyword_picker = ChatPromptTemplate.from_template("""
         You are an Altair Motion Solve MBD Entity Extractor. 
         Your job is to extract search terms from a user query that will be used to find nodes in a MotionSolve Knowledge Graph.
@@ -78,17 +95,34 @@ class ActionStepExecutorAnalyst:
         for kw in keywords:
             nodes=self.neo4j_connector.find_nodes_hybrid(kw.lower(), mode="hybrid", top_k=1)
             kw_node_pairs[kw] = nodes
-        # join the found  nodes into a one list
-        all_found_nodes =[]
+        
         for kw, nodes in kw_node_pairs.items():
             if not nodes:
                 continue
             for node in nodes:                
                 if node:
-                    all_found_nodes.append(node['name'])
-        all_found_nodes = list(set(all_found_nodes))  # Unique nodes
-        print(f"[PLANNER] Extracted Nodes: {all_found_nodes}")
-        self.chain_txt,chains = self.neo4j_connector.find_chains_between_nodes(all_found_nodes)
+                    self.all_found_nodes.append(node['name'])
+        self.all_found_nodes = list(set(self.all_found_nodes))  # Unique nodes
+        print(f"[DATA EXTRACTOR] Nodes extracted: {self.all_found_nodes}")        
+        
+        return state
+    def _get_sub_graph(self, state: ExecutionState) -> dict:
+        self.chain_txt,chains = self.neo4j_connector.find_chains_between_nodes(self.all_found_nodes)
+        self.mermaid_code = self.neo4j_connector.generate_mermaid_topology(chains)
+        
+    def _planner_node(self, state: ExecutionState) -> dict:
+        print(f"[DATA EXTRACTOR] Extracting Sub graphs from Nodes...")
+        self._get_sub_graph(state)
+        state["schema"] = self.mermaid_code
+        print(f"[PLANNER] Planning action steps from Sub graphs...")
+        # reset all states to start fresh
+        state["plan"] = []
+        state["iteration_count"] = 0
+        state["next_step"] = ""
+        state["past_steps"] = []
+        state["last_plot"] = ""
+        state['hypothesis'] = ""
+        state["next_action"] = "continue"
         """
         for ch in chains.values():
             if ch.type == 'HAS_COMPONENT':
@@ -101,17 +135,24 @@ class ActionStepExecutorAnalyst:
                 self.node_dossiers[e['name']] = self.tool_belt.get_enriched_dossier(e['name'])
         """
         prompt = ChatPromptTemplate.from_template("""
-            You are a Lead MBD Architect. Your goal is to solve a specific engineering problem using a MotionSolve model.
-            
+            You are a Lead MBD Architect.
+            The user has tasked you with the `GOAL` which is about a MotionSolve model depicted in terms of its knowledge graph equivalent MODEL CHAIN (SCHEMA).
             GOAL: {goal}
             MODEL CHAIN (SCHEMA): {schema}            
-
+            The Graph contains the following node types:
+            - Body (Physical parts)
+            - Joint (Physical parts that connect two other Physical parts)
+            - PostRequest & OutputComponent (Exist as pairs only. Measure Physical quantities from any node storing them time series data.)
+            - StateEquation (Tire models:  Calculates force and moment based on inputs from the connected Body. Applies force on a body by sending its outputs via a interface system  node 'Force'.)
+            - Force (Nodes representing a interface system to the calling Motion Solve solver in MBD model.)
+            
             INSTRUCTIONS:
-            1. Look at the "MODEL CHAIN" and identify every node that is NOT an 'OutputComponent'. For each of these, create a plan step to use 'dossier_digestor' to understand its physics and constraints from the goal point of view.
-            2. Look at the "MODEL CHAIN" and identify 'PostRequest' and 'OutputComponent' pairs. Create a specific plan step to use 'python_analysis' for these pairs. State clearly the node type also so as to create cypher query easily.
+            1. Look at the "MODEL CHAIN" and identify every node that is NOT of type 'OutputComponent'. For each of these, create a action step to use 'dossier_digestor' to understand its physics and constraints from the goal point of view.
+            2. Look at the "MODEL CHAIN" and identify pairs of nodes of type 'PostRequest' and 'OutputComponent'. Create a action step for each of these to use 'python_analysis' to generate insights from the goal point of view. 
             3. Every step in the "plan" MUST be a standalone instruction naming the specific node. Add details on how each step contributes to understanding or solving the GOAL.
             - BAD STEP: "Analyze the bodies."
-                        
+            - GOOD STEP: "Use tool 'dossier_digestor' on 'node_name' to understand blah blah..."            
+            - GOOD STEP: "Use tool 'python_analysis' on PostRequest 'post_req_name' and its OutputComponent 'output_component_name' to understand blah blah..."
             HYPOTHESIS:
             Based on the directional relationships in the MODEL CHAIN (e.g. Node A -> Node B), write a one-sentence engineering hypothesis about how these nodes influence the GOAL.
 
@@ -131,14 +172,12 @@ class ActionStepExecutorAnalyst:
         chain2 = prompt | self.llm | JsonOutputParser()
         response = chain2.invoke({
             "goal": state["goal"],
-            "schema": self.chain_txt,               
+            "schema": self.chain_txt,
         })
-        
-        # In production, use .with_structured_output. Here we simulate for brevity.
-        # This part assumes the LLM returns a clean plan.        
-
-        return {"plan": response.get("plan"), "next_step":response.get("plan")[0],"iteration_count": 0}
-
+        state["schema"] = self.mermaid_code
+        state["plan"] = response.get("plan", [])
+        state["hypothesis"] = response.get("hypothesis", "")
+        return state
     def _executor_node(self, state: ExecutionState) -> dict:
         current_task = state["next_step"] or state["plan"][0]
         print(f"[EXECUTOR] Task: {current_task}")
@@ -153,7 +192,7 @@ class ActionStepExecutorAnalyst:
 
         @tool
         def dossier_digestor(node_name: str) -> str:
-            """Explains the physics and documentation of a node.
+            """Explains the physics and documentation of a node. Do not send the type of the node. The types are Body, Joint, Force, StateEquation, PostRequest, OutputComponent.
             Args:
                 node_name (str): Exact name of the node.
             Returns: Enriched dossier string.
@@ -196,15 +235,7 @@ class ActionStepExecutorAnalyst:
             })
             return response
         
-        @tool
-        def fetch_data(node_name: str) -> str:
-            """Confirms data exists and gets basic stats before full analysis.
-            Args:
-                node_name (str): Exact name of the PostRequest or OutputComponent node.
-            Returns: Data statistics string.
-            """            
-            return self.tool_belt.fetch_numerical_data(node_name, self.state["plan"][0])
-        
+       
         @tool
         def get_neighbors(node_name: str) -> str:
             """Use to Explores connections between entities: (node)-[rel]->(neighbor)
@@ -213,7 +244,12 @@ class ActionStepExecutorAnalyst:
                 node_name (str): Exact name of the node.
             Returns: List of neighboring nodes and their relationships.
             """
-            return self.tool_belt.get_node_neighbors(node_name)
+            new_nodes = self.tool_belt.get_node_neighbors(node_name)
+            all_found_nodes = self.all_found_nodes
+            for node in new_nodes:
+                if node and node not in all_found_nodes:
+                    all_found_nodes.append(node)
+            self.all_found_nodes = list(set(all_found_nodes))  # Unique nodes
 
         @tool
         def python_analysis(cypher: str) -> str:
@@ -238,13 +274,21 @@ class ActionStepExecutorAnalyst:
 
             INPUT DATA: You have a pandas DataFrame named `df` with two columns:
             - 'time': List of time steps.
-            - 'val': List of numerical values for the signal.
-
-            LIBRARIES: pandas (pd), numpy (np), scipy (sp).
+            - 'val': List of numerical values for the signal.            
+            LIBRARIES: pandas (pd), numpy (np), scipy (sp), plotly.graph_objects (go). 
+            These are availble to in your local scope as per the alias given above.
             REQUIREMENTS:
             1. Perform numerical analysis relevant to the TASK using the data in `df`.
-            2. Print a detailed summary of your findings as they relate to the TASK. This is going to run in a isolated sandbox. So dont plot anything. PRINT your required findings only.
-            3. Do NOT include any markdown formatting or '```python' tags. Just raw code.""")
+            2. Use all necessary numerical methods and statistical techniques.
+            3. Use all standard numerical guards (e.g., handling NaNs, divide by zero etc...).
+            OUTPUT:
+            1. Print a detailed summary of your findings as they relate to the TASK. 
+            2. Create an interactive Plotly figure named `plotly_fig` using `plotly.graph_objects`.
+            MANDATORY:
+            1. Create an interactive Plotly figure named `plotly_fig` using `plotly.graph_objects`.
+            2. Do NOT call `plotly_fig.show()` or `plt.show()`. Just define the `plotly_fig` object.
+            3. Use all standard numerical guards 
+            4. Do NOT include any markdown formatting or '```python' tags. Just raw code.""")
             llm_gpt_4o = ChatOpenAI(model=global_vars.model_openai_4o, temperature=0)
             chain = code_writer | llm_gpt_4o | StrOutputParser()
             generated_code = chain.invoke({
@@ -254,6 +298,9 @@ class ActionStepExecutorAnalyst:
             })
             cleaned_code = generated_code.replace("```python", "").replace("```", "").strip()
             py_data = self.tool_belt.run_python_analysis(cypher, cleaned_code)
+            # get only text summary and the plotly json from the result
+            Plotly_JSON = py_data.get("Plotly_JSON","")
+            py_data = py_data.get("Analysis_Result","")
             data_analyst = ChatPromptTemplate.from_template("""
                 "You are a Senior MBD Analyst. You need to answer the CURRENT TASK using the PYTHON ANALYSIS RESULTS provided. Ignore things that are not relevant to the TASK.
                 The CURRENT TASK is part of a bigger GOAL. This is given to give a context of why this TASK was created.
@@ -276,22 +323,15 @@ class ActionStepExecutorAnalyst:
                 "task": self.state["next_step"],
                 "py_data": py_data
             })
+            analysis_summary['Plotly_JSON'] = Plotly_JSON
             return analysis_summary
 
-        @tool
-        def list_nodes_by_type(node_type: str) -> str:
-            """Lists all nodes of a given type such bodies, joints, or requests in the graph."
-            Args:
-                node_type (str): Type of nodes to list.
-            Returns: List of node names.
-            """
-            return self.tool_belt.list_nodes_by_type(node_type)
         tools = [dossier_digestor, get_neighbors, python_analysis]
         
         llm_with_tools = self.llm.bind_tools(tools)
         self.state=state
         tool_selector_prompt = ChatPromptTemplate.from_template("""
-        "You are an MBD execution agent. Choose the correct tool to complete the task.
+        "You are an MBD router agent. Your role is to only Choose the tool mentioned in the task. Dont interpret the task. Just pick the tool mentioned.
         Task: {current_task}. """)
                                                                 
         tool_selector_exec = tool_selector_prompt | llm_with_tools 
@@ -306,10 +346,8 @@ class ActionStepExecutorAnalyst:
                 args = call["args"]
                 # Execution Mapping
                 tool_map = {
-                    "fuzzy_search": fuzzy_search,
                     "dossier_digestor": dossier_digestor,
                     "python_analysis": python_analysis,
-                    "fetch_data": fetch_data,
                     "get_neighbors": get_neighbors
                 }
                 # Execute Tool
@@ -318,12 +356,20 @@ class ActionStepExecutorAnalyst:
                     if isinstance(raw_result, dict):
                     # For the Dossier Dictionary:
                     # We convert to a pretty-printed string for the history
+                    # For the Python Analysis Dictionary:
+                        if raw_result.get("Plotly_JSON"):                        
+                            state["last_plot"] = raw_result.get("Plotly_JSON")
+                            del raw_result["Plotly_JSON"]
                         content = json.dumps(raw_result, indent=2)
                         header = f"ENTITY METADATA (Source: {t_name})"
                     else:
                         # For the Python Analysis String:
                         content = str(raw_result)
-                        header = f"NUMERICAL ANALYSIS (Source: {t_name})"
+                        header = f"(Source: {t_name})"
+                    if t_name == 'get_neighbors':
+                        state['next_action'] = 'replan'
+                    else:
+                        state['next_action'] = 'continue'
 
                     # Wrap in a clear block so the LLM sees the boundary
                     formatted_findings.append(f"### {header}\n{content}")
@@ -360,17 +406,20 @@ class ActionStepExecutorAnalyst:
 
     def _create_sub_graph(self):
         workflow = StateGraph(ExecutionState)
+        workflow.add_node("data_extractor", self._data_extractor_for_planner_node)
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("executor", self._executor_node)
         workflow.add_node("summarizer", self._summarizer_node)
         
-        workflow.set_entry_point("planner")
+        workflow.set_entry_point("data_extractor")
+        workflow.add_edge("data_extractor", "planner")
         workflow.add_edge("planner", "executor")
         
         workflow.add_conditional_edges(
             "executor",
-            lambda s: "summarize" if not s["next_step"] or s["iteration_count"] > 10 else "execute",
-            {"execute": "executor", "summarize": "summarizer"}
+            # route to planner if 'next_action' is 'replan' else if 'continue' and there is a next step go to executor else to summarizer
+            lambda s: "replan" if s["next_action"] == "replan" else "execute" if  s["next_step"] else "summarize",
+            {"execute": "executor", "replan": "planner", "summarize": "summarizer"}
         )
         workflow.add_edge("summarizer", END)
         return workflow.compile(checkpointer=MemorySaver())
@@ -381,24 +430,66 @@ class ActionStepExecutorAnalyst:
         for event in self.subgraph.stream(inputs, config):
             print(event)
     # --- ENTRYPOINT ---
+    def parse_latest_finding(self, finding_str: str, task_no: int) -> str:
+        """Extracts a clean summary for the UI status bar."""
+        if "RESULTS:" not in finding_str:
+            return "Processing..."
 
-    def process_message(self, message: str, chat_history: List[BaseMessage]) -> Generator[str, None, None]:
-        """Standard method to run the graph."""
+        # 1. Isolate the results section
+        results_part = finding_str.split("RESULTS:")[1].strip()
+
+        # 2. Case A: It's a JSON Metadata block (Dossier Digest)
+        if "### ENTITY METADATA" in results_part:
+            try:
+                # Find the first { and last } to isolate the JSON string
+                json_match = re.search(r"(\{.*\})", results_part, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group(1))
+                    # Return the specific insight
+                    return f"🔍 Insight of Task {task_no}: {data.get('analysis_impact', 'Node analysis complete.')}"
+            except Exception:
+                pass
+        return "Thinking..."
+    def process_message(self, message: str, chat_history: List[BaseMessage]) -> Generator[dict, None, None]:
+        """Runs the graph and yields structured data for the UI."""
         config = {"configurable": {"thread_id": "1"}}
-        inputs = {"goal": message, "plan": [], "next_step": "", "past_steps": [], "discovered_entities": {}, "iteration_count": 0}
+        # Ensure your state has 'schema' to store the chain_txt
+        inputs = {
+            "goal": message, 
+            "plan": [], 
+            "next_step": "", 
+            "past_steps": [], 
+            "schema": "", 
+            "iteration_count": 0,
+            "next_action": "continue",
+        }
         
-        final_answer_started= False
         for output in self.subgraph.stream(inputs, config=config):
-            # We can yield status updates to the UI here
             for key, value in output.items():
+                
+                # 1. Update the Chain/Topology Tab
+                if "schema" in value and value["schema"]:
+                    yield {"type": "chain", "data": value["schema"]}
+
+                # 2. Update the Plan Checklist
+                if "plan" in value and value["plan"]:
+                    yield {"type": "plan", "data": value["plan"]}
+
+                # 3. Status updates from the Executor
                 if key == "executor":
-                    yield f"STATUS: {value['past_steps']}\n"
+                    # Get the most recent finding to show as status
+                    latest_finding = value['past_steps'][-1] if value['past_steps'] else "Thinking..."
+                    clean_status = self.parse_latest_finding(latest_finding, value["iteration_count"])
+                    yield {"type": "status", "data": clean_status}
+                    
+                    # Check if a plot was generated
+                    if "last_plot" in value and value["last_plot"]:
+                        yield {"type": "plot", "data": value["last_plot"]}
+
+                # 4. The Final Conclusion
                 elif key == "summarizer":
-                    final_answer_started = True
-                    if value['final_answer'] and not final_answer_started:
-                        yield "FINAL_ANSWER_START\n"
-                    if value['final_answer']:
-                        yield f"\nFINAL ANSWER:\n {value['final_answer']}"
+                    if "final_answer" in value:
+                        yield {"type": "text", "data": value["final_answer"]}
     
         
     def save_graph(self, filepath: Path):

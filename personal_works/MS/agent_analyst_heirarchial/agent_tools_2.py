@@ -3,6 +3,7 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 import io
+import plotly.tools as tls
 from contextlib import redirect_stdout
 import sys
 from thefuzz import process
@@ -21,26 +22,53 @@ class ToolBelt:
             print(f"\033[93m--- TOOL: run_python_analysis ' ---\033[0m")
             raw_results = self.neo4j_connector.query(cypher_query)
             if not raw_results:
-                return "Error: Cypher query returned no data."
-            
+                return {"Error": "Cypher query returned no data.", "Plotly_JSON": None}
             df = pd.DataFrame(raw_results[0].data())
+            if df.empty:
+                return {"Analysis_Result": "DataFrame is empty (no time steps found).", "Plotly_JSON": None}
             safe_globals = {"__builtins__": __builtins__} 
-            local_scope = {"df": df, "np": np, "pd": pd, "sp": sp}
+            import plotly.graph_objects as go
+            local_scope = {"df": df, "np": np, "pd": pd, "sp": sp,'go': go, 'plotly_fig': None, 'fig': None}
             stdout_capture = io.StringIO()
-            
+            final_plot_dict = None
             try:
                 with redirect_stdout(stdout_capture):
                     exec(python_code, safe_globals, local_scope)
-                
-                # This is your final analysis string!
+                    
+                    # Check for 'plotly_fig' (Plotly) or 'fig' (Matplotlib)
+                    plotly_fig = local_scope.get('plotly_fig', None)
+                    mpl_fig = local_scope.get('fig', None) # Check matplotlib fig
+                    
+                    # Handle Matplotlib conversion if needed
+                    if plotly_fig is None and mpl_fig is not None:
+                        try:
+                            import plotly.tools as tls
+                            plotly_fig = tls.mpl_to_plotly(mpl_fig)
+                            plt.close(mpl_fig) # Clean up memory
+                        except Exception as e:
+                            print(f"Matplotlib conversion failed: {e}")
+
+                    # FINAL SERIALIZATION: Convert to Dict for LangGraph
+                    final_plot_dict = None
+                    if plotly_fig is not None:
+                        if hasattr(plotly_fig, 'to_dict'):
+                            final_plot_dict = plotly_fig.to_dict()
+                        elif isinstance(plotly_fig, dict):
+                            final_plot_dict = plotly_fig
+
                 analysis_result = stdout_capture.getvalue()
 
             except Exception as e:
                 analysis_result = f"Simulation analysis failed with error: {str(e)}"
-
-            return f"Analysis Result:\n{analysis_result}"
+                final_plot_dict = None
         except Exception as e:
-            return f"Error: {str(e)}"
+                analysis_result = f"Simulation analysis failed with error: {str(e)}"
+                final_plot_dict = None
+            # Return pure Dict
+        return {
+            "Analysis_Result": analysis_result, 
+            "Plotly_JSON": final_plot_dict 
+        }
 
     def get_post_request_components_map(self, pr) -> str:
         """Lists all postrequest to OutputComponents mapping."""        
@@ -89,7 +117,10 @@ class ToolBelt:
         if not records: return f"No neighbors found for {node_name}"
         
         lines = [f"- {r['rel']} -> {r['name']} ({r['type']})" for r in records]
-        return f"Connections for {node_name}:\n" + "\n".join(lines)
+        nodes=[]
+        for r in records:
+            nodes.append(r['name'])
+        return nodes
     
     def get_enriched_dossier(self, entity_name: str) -> str:
         """

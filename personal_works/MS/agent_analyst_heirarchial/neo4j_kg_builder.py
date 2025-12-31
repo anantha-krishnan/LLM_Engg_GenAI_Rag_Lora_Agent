@@ -235,13 +235,13 @@ class Neo4jConnector:
         node_descriptions = {
         "Simulation": "Contains global simulation settings.",
         "SolverSettings": "Holds numerical solver parameters.",
-        "Body": "Represents a rigid body in the model.        ",
-        "Joint": "A constraint between two bodies.",
+        "Body": "A physical part representing a rigid body in the model.",
+        "Joint": "A physical part applying constraints on degrees of freedom between two physical parts.",
         "Motion": "A prescribed motion applied to a joint.",
-        "PostRequest": "A request to output a specific measurement.",
-        "OutputComponent": "The numerical time-series results of a PostRequest.",
-        "Force": "A force element acting between bodies.",        
-        "StateEquation": "Control state equations for a subsystem like a tire."}
+        "PostRequest": "PostRequest & OutputComponent Exist as pairs only. Measure Physical quantities from any node storing them as time series data.",
+        "OutputComponent": "PostRequest & OutputComponent Exist as pairs only. Measure Physical quantities from any node storing them as time series data.",
+        "Force": "Nodes representing a interface system to the calling Motion Solve solver in MBD model.",        
+        "StateEquation": "Control state equations for a subsystem like a tire that calculates force and moment based on inputs from the connected Body."}
         # Query 1: Clean Properties (Filtering out the generic 'Node' label)
         prop_query = """
         CALL db.schema.nodeTypeProperties() 
@@ -281,6 +281,7 @@ class Neo4jConnector:
             schema_output.append("\n**Model Connectivity (Edges):**")
             for rec in rel_results:
                 schema_output.append(f"- ({rec['source']})-[:{rec['relType']}]->({rec['target']})")
+        return "\n".join(schema_output)
 
         # --- THE 'MBD Knowledge graph LAWS' ---
         
@@ -371,39 +372,58 @@ class Neo4jConnector:
                 output.append(f"{s_fmt} --[:{rel.type}]--> {e_fmt}")
 
             return "\n".join(output),unique_rels
-    
-    def condense_paths(self, raw_paths: list) -> list:
-        """
-        Removes sub-paths (paths that are already contained within a longer path).
-        """
-        if not raw_paths:
-            return []
 
-        # 1. Convert Path objects to lists of IDs for easy comparison
-        def get_ids(p):
-            return [str(getattr(n, 'element_id', getattr(n, 'id', ''))) for n in p.nodes]
-
-        # 2. Sort paths by length, longest first
-        # This ensures we check if shorter paths are inside longer ones
-        sorted_paths = sorted(raw_paths, key=lambda x: len(x.nodes), reverse=True)
+    def generate_mermaid_topology(self, unique_rels: dict) -> str:
+        mermaid_code = ["graph TD"]
         
-        master_paths = []
-        for path in sorted_paths:
-            ids = get_ids(path)
-            is_subset = False
-            
-            for master in master_paths:
-                master_ids = get_ids(master)
-                # Check if this path's ID sequence is a sub-sequence of a master path
-                # Example: [1, 2] is a sub-sequence of [0, 1, 2, 3]
-                if any(master_ids[j:j+len(ids)] == ids for j in range(len(master_ids) - len(ids) + 1)):
-                    is_subset = True
-                    break
-            
-            if not is_subset:
-                master_paths.append(path)
-                
-        return master_paths
+        # 1. DEFINE ALL STYLES (Make sure every class you use is defined here)
+        mermaid_code.append("classDef body fill:#f9f,stroke:#333,stroke-width:2px;")
+        mermaid_code.append("classDef post fill:#bbf,stroke:#333,stroke-width:2px;")
+        mermaid_code.append("classDef output fill:#dfd,stroke:#333,stroke-width:1px;")
+        mermaid_code.append("classDef force fill:#ffcc00,stroke:#333,stroke-width:2px;")
+        mermaid_code.append("classDef controlstate fill:#e1f5fe,stroke:#01579b,stroke-width:2px;")
+        mermaid_code.append("classDef joint fill:#eeeeee,stroke:#333,stroke-dasharray: 5 5;")
+
+        # Helper to map Labels to CSS Classes
+        style_map = {
+            "Body": "body",
+            "PostRequest": "post",
+            "OutputComponent": "output",
+            "Force": "force",
+            "StateEquation": "controlstate",
+            "Joint": "joint"
+        }
+
+        def safe_id(name):
+            return re.sub(r'[^a-zA-Z0-9_]', '_', name)
+
+        # 2. TRACK NODES TO AVOID DUPLICATE DEFINITIONS
+        processed_nodes = set()
+
+        for rel in unique_rels.values():
+            nodes_to_format = [rel.start_node, rel.end_node]
+            formatted_nodes = []
+
+            for node in nodes_to_format:
+                n_id = safe_id(node.get('name'))
+                n_label = node.get('name')
+                n_type = list(node.labels)[0] if node.labels else ""
+                n_style = style_map.get(n_type, "")
+
+                # If we haven't seen this node, define it with its style
+                # Syntax: id["label"]:::style
+                if n_id not in processed_nodes:
+                    style_suffix = f":::{n_style}" if n_style else ""
+                    formatted_nodes.append(f'{n_id}["{n_label}"]{style_suffix}')
+                    processed_nodes.add(n_id)
+                else:
+                    formatted_nodes.append(n_id)
+
+            # 3. ADD THE RELATIONSHIP
+            line = f'{formatted_nodes[0]} -->|{rel.type}| {formatted_nodes[1]}'
+            mermaid_code.append(line)
+
+        return "\n".join(mermaid_code)
     def find_nodes_hybrid(self, keyword: str, mode="hybrid", top_k=3, openai_api_key=None):
         """
         Modes: 
