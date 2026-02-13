@@ -189,3 +189,5 @@ nohup.out
 *.png
 
 scraper_cache/
+personal_works/MS/Driver/*
+!personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/carla-python-examples-main/
