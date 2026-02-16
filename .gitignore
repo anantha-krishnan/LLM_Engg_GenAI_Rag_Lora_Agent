@@ -199,3 +199,6 @@ personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/*
 !personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/
 personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/*
 !personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/carla-python-examples-main/
+personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/carla-python-examples-main/*
+!personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/carla-python-examples-main/mine
+!personal_works/MS/Driver/carla_0_9/CARLA_0.9.15/WindowsNoEditor/PythonAPI/carla-python-examples-main/Map_Layouts
