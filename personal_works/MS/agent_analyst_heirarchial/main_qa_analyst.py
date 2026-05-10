@@ -1,7 +1,7 @@
 import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
 import plotly.graph_objects as go
-#from agent_analyst import QAAnalystAgent
+#from agent_analyst import SupervisorAgent
 from action_step_executor_analyst import ActionStepExecutorAnalyst
 import global_vars
 from neo4j_kg_builder import Neo4jConnector

@@ -42,8 +42,8 @@ gemini_text_model = model_gemini_2_5_pro
 gemini_image_model = model_gemini_2_0_flash_image
 CLAUDE_MODEL = "claude-3-5-sonnet-20240620"
 # neo4j connection details
-NEO4J_URI = "neo4j+s://3f26ade5.databases.neo4j.io"
-NEO4J_USER = "neo4j"
+NEO4J_URI = os.getenv('NEO4J_URI',"neo4j+s://3f26ade5.databases.neo4j.io")
+NEO4J_USER = os.getenv('NEO4J_USERNAME',"neo4j")
 NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD')
 
 # ultra-low cost models
@@ -61,14 +61,9 @@ data_dir = script_dir / ".."/"../" / "Pdata"
 from typing import List, TypedDict, Generator, Optional, Any
 from langchain_core.messages import BaseMessage
 class GraphState(TypedDict):
-    hypotheses: List[str]  # A ranked list of potential root causes
     reasoning_log: str
     question: str
     chat_history: Optional[List[BaseMessage]]
     answer: str
     standalone_question: Optional[str]
-    current_phase: str # "hypothesis", "planning", "execution", "finalizing"
     original_question: str
-    action_plan: List[str]
-    step_summaries: dict[str, List[str]]  # step description -> findings
-    current_step: str

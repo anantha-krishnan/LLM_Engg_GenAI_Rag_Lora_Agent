@@ -32,7 +32,6 @@ class ExecutionState(TypedDict):
     hypothesis: str
     plan: List[str]
     past_steps: Annotated[List[str], reduce_past_steps]
-    #discovered_entities: Dict[str, str] # CRITICAL: Stores {"hub": "Hub_Body_01"}
     iteration_count: int
     final_answer: str
     next_step: Optional[str]
@@ -197,7 +196,10 @@ class ActionStepExecutorAnalyst:
                 node_name (str): Exact name of the node.
             Returns: Enriched dossier string.
             """
-            raw_dossier = self.node_dossiers.get(node_name) or self.tool_belt.get_enriched_dossier(node_name)
+            if node_name not in self.node_dossiers:
+                self.node_dossiers[node_name] = {"dossier_explanation": self.tool_belt.get_enriched_dossier(node_name)}
+            # get dossier_explanation from self.node_dossiers[node_name]            
+            raw_dossier = self.node_dossiers.get(node_name).get("dossier_explanation","")
             # Prepare context
             dossier_digestor = ChatPromptTemplate.from_template("""
             "You are a Senior MBD Systems Engineer. 
@@ -233,6 +235,8 @@ class ActionStepExecutorAnalyst:
                 "raw_dossier": raw_dossier,
                 "task": self.state["next_step"]
             })
+            # append the dict 'response' to the dict self.node_dossiers[node_name]
+            self.node_dossiers[node_name].update(response)
             return response
         
        
@@ -392,17 +396,39 @@ class ActionStepExecutorAnalyst:
     
       
     def _summarizer_node(self, state: ExecutionState) -> dict:
-        prompt = ChatPromptTemplate.from_template("Analyse and Summarize `Findings` for goal: {goal}" \
-        "Findings: {history}" \
-        "Relevant Neo4j Context from MBD Model: {chain_txt}" \
-        "Your Original Hypothesis which you made before getting the Findings: {hypothesis}" \
-        "Provide a detailed final answer. Use data and facts to support your conclusions.")
-        chain = prompt | self.llm
-        res = chain.invoke({"goal": state["goal"], 
-                            "history": state["past_steps"],
-                            "chain_txt": self.chain_txt,
-                            "hypothesis": state.get("hypothesis", "")})
-        return {"final_answer": res.content}
+        prompt = ChatPromptTemplate.from_template("""
+        You are a Senior MBD Analyst. Analyse and Summarize `FINDINGS` for `GOAL`:
+        
+        GOAL: {goal}
+        HYPOTHESIS (Structural Context): {hypothesis}
+        FINDINGS (Data Context): {history}
+        Relevant Neo4j Context from MBD Model: {chain_txt}"
+        
+        TASK:
+        1. final_answer: Write a detailed "final_answer" for the user. Use data and facts to support your conclusions.
+        2. Two things are needed for retrieving "data and context" from this "final_summary" in future conversations when user continues the conversation by referring to this "final_summary". 
+        These will be used to help YOU in future conversations.  Create a "context_artifact" dict for this task. Populate it with two keys and their values:
+           a. concise_summary: Write a concise summary of your "final_answer" relative to the GOAL. 
+           b. key_facts: Extract all key numerical facts/parameters along with their nodes names from your "final_answer". A list of short strings capturing the numbers/params found (e.g., "Hub Mass = 1.0kg", "Vertical Force of PostRequest_name and OutputComponent Mean = 362N", "Joint type of joint_name = Fixed").
+           
+        OUTPUT FORMAT (JSON ONLY):
+        {{
+            "final_answer": "The detailed markdown text...",
+            "context_artifact": {{ 
+                "concise_summary": "A brief summary of the "final_answer"...",               
+                "key_facts": ["fact 1", "fact 2", "fact 3"]
+            }}
+        }}
+        """)
+        
+        chain = prompt | self.llm | JsonOutputParser()
+        res = chain.invoke({
+            "goal": state["goal"], 
+            "history": state["past_steps"],
+            "hypothesis": state.get("hypothesis", ""),            
+            "chain_txt": self.chain_txt,
+        })
+        return {"final_answer": res}
 
     def _create_sub_graph(self):
         workflow = StateGraph(ExecutionState)
@@ -426,7 +452,7 @@ class ActionStepExecutorAnalyst:
 
     def run(self, query: str):
         config = {"configurable": {"thread_id": "1"}}
-        inputs = {"goal": query, "plan": [], "past_steps": [], "discovered_entities": {}, "iteration_count": 0}
+        inputs = {"goal": query, "plan": [], "past_steps": [], "iteration_count": 0}
         for event in self.subgraph.stream(inputs, config):
             print(event)
     # --- ENTRYPOINT ---
@@ -489,7 +515,7 @@ class ActionStepExecutorAnalyst:
                 # 4. The Final Conclusion
                 elif key == "summarizer":
                     if "final_answer" in value:
-                        yield {"type": "text", "data": value["final_answer"]}
+                        yield {"type": "text", "data": value["final_answer"]["final_answer"]}
     
         
     def save_graph(self, filepath: Path):
@@ -517,5 +543,11 @@ class ActionStepExecutorAnalyst:
 
 if __name__ == "__main__":
     user_query = 'Analyze the properties of the hub body to understand its characteristics, mass distribution, and any constraints. Use a Cypher query to extract the hub body node and its relevant properties.'   
-    qa_action_exec_agent = ActionStepExecutorAnalyst()
+    from neo4j_kg_builder import Neo4jConnector
+    neo4j_connector = Neo4jConnector(
+    uri=global_vars.NEO4J_URI,
+    user=global_vars.NEO4J_USER,
+    password=global_vars.NEO4J_PASSWORD
+    )
+    qa_action_exec_agent = ActionStepExecutorAnalyst(neo4j_connector)
     qa_action_exec_agent.save_graph(Path(__file__).parent / "qa_action_exec_agent_h_graph.png")        

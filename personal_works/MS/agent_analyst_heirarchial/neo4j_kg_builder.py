@@ -808,7 +808,7 @@ class Neo4jUploader:
                 
                 if input_array_element is not None:
                     var_ids = input_array_element.text.strip().split()
-                    for var_id in var_ids:
+                    for var_index, var_id in enumerate(var_ids):
                         var_element = root.find(f'.//Model/Reference_Variable[@id="{var_id}"]')
                         if var_element is not None:
                             expr = var_element.get('expr') or var_element.get('usrsub_param_string')
@@ -830,7 +830,17 @@ class Neo4jUploader:
                                 b_id = marker_to_body.get(m_id)
                                 if b_id:
                                     unique_body_ids.add(b_id)
-                                    input_metadata.append(f"Var: {var_element.get('label')} (ID: {var_id}) measures {call_cmd} of Body {b_id}")
+                                    # get body name from body id b_id
+                                    b_id_name = session.run("""                                    
+                                    MATCH (b:Body {ms_id: $body_id})                                    
+                                    RETURN b.name AS body_name
+                                    """, body_id=b_id)
+                                    b_id_name_record = b_id_name.single()
+                                    if b_id_name_record:
+                                        b_id_name_record = b_id_name_record['body_name']
+                                    else:
+                                        b_id_name_record = b_id
+                                    input_metadata.append(f"Input Var {var_index}: {var_element.get('label')} measures Body {b_id_name_record}")
 
                 # 1. MERGE the StateEquation and link to AutoTireSystem
                 # We store the detailed variable list as a property here.
@@ -838,7 +848,7 @@ class Neo4jUploader:
                     'ms_id': system_id,
                     'name': f"Control State Equation for Tire {system_id}",
                     'input_variable_details': input_metadata, 
-                    'usrsub_param_string': se.get('usrsub_param_string')
+                    'usrsub_param_string': se.get('usrsub_param_string'),
                 }
                 
                 session.run("""
@@ -851,18 +861,18 @@ class Neo4jUploader:
                 if unique_body_ids:
                     session.run("""
                         MATCH (cse:StateEquation {ms_id: $eqn_id})
+                        MATCH (fv:Force {ms_id: $fv_id})
+                        SET cse.output_variable_details = "Forces and Moments; applied via node '" + toLower(fv.name) + "' of type 'Force'"
+                        //Link the StateEquation to the Force_Vector_TwoBody
+                        MERGE (cse)-[:APPLIES_FORCE_VIA]->(fv)
+                        WITH cse
                         UNWIND $body_list AS b_id
                         MATCH (b:Body {ms_id: b_id})
-                        MERGE (cse)-[:MEASURES_INPUT]->(b)
-                    """, eqn_id=se_props['ms_id'], body_list=list(unique_body_ids))
+                        MERGE (cse)-[:MEASURES_INPUT]->(b)                        
+                    """, eqn_id=se_props['ms_id'], body_list=list(unique_body_ids),fv_id=tire_system_nodes[se_props['ms_id']])
                 
-                # 3. Link the StateEquation to the Force_Vector_TwoBody
-                session.run("""
-                    MATCH (cse:StateEquation {ms_id: $eqn_id})                    
-                    WITH cse
-                    MATCH (fv:Force {ms_id: $fv_id})
-                    MERGE (cse)-[:APPLIES_FORCE_VIA]->(fv)
-                """, eqn_id=se_props['ms_id'], fv_id=tire_system_nodes[se_props['ms_id']])
+                
+               
                 
             # --- 5: Extract Output Requests with Full Context ---
             requests = root.findall('.//Model/Post_Request')
@@ -1069,7 +1079,7 @@ if __name__ == "__main__":
     data_dir = script_dir / ".."/"../" /"../"/ "Pdata"
     data_dir_sub = data_dir / "TestRig"
     XML_FILE = data_dir_sub / "SingleTire_Run.xml"
-    create_db = True
+    create_db = False
 
     if not XML_FILE.exists():
         print(f"Error: XML file not found at {XML_FILE}")
