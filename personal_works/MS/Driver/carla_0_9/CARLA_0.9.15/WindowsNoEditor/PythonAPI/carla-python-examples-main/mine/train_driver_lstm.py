@@ -493,6 +493,90 @@ def get_model_architecture_onnx():
     
     print(f"[SUCCESS] Saved ONNX model to {onnx_path}")
     print(">>> Next Step: Drag and drop this file into https://netron.app to see the beautiful architecture diagram! <<<")
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+# --- IEEE Formatting Standards ---
+# Use serif fonts to match the IEEE LaTeX template
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman"],
+    "font.size": 10,
+    "axes.titlesize": 12,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 9,
+    "figure.titlesize": 14
+})
+
+def generate_histograms(csv_path, output_dir="figures"):
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"Loading data from {csv_path}...")
+    df = pd.read_csv(csv_path)
+    
+    # Define the 6 columns we want to plot
+    # (If you added speed_input, you can swap one out or make a 2x4 grid)
+    columns_to_plot = [
+        ('cte_input', 'Cross-Track Error (m)'),
+        ('heading_error_input', 'Heading Error (rad)'),
+        ('yaw_rate_input', 'Yaw Rate (rad/s)'),
+        ('future_path_curvature_input', 'Future Curvature (1/m)'),
+        ('future_heading_error_input', 'Future Heading Error (rad)'),
+        ('steer_cmd', 'Steering Command (normalized)')
+    ]
+    
+    # Create a 2x3 grid (Perfect for spanning two columns in an IEEE paper)
+    fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(12, 6))
+    axes = axes.flatten()
+    
+    for i, (col, title) in enumerate(columns_to_plot):
+        ax = axes[i]
+        
+        # Drop NaNs just in case
+        data = df[col].dropna()
+        
+        # Calculate statistics to display on the plot
+        mean_val = data.mean()
+        std_val = data.std()
+        
+        # Plot the histogram
+        # 100 bins show the heavy tails nicely. 
+        # color '#2c7fb8' is a highly professional, colorblind-friendly academic blue
+        ax.hist(data, bins=100, color='#2c7fb8', edgecolor='black', linewidth=0.3, alpha=0.8)
+        
+        # Add a subtle grid behind the bars
+        ax.grid(True, linestyle='--', alpha=0.5, zorder=0)
+        ax.set_axisbelow(True) # Puts grid behind the histogram
+        
+        # Formatting
+        ax.set_xlabel(title)
+        ax.set_ylabel('Frequency')
+        ax.set_title(f"{col}", fontweight='bold')
+        
+        # Optional: Add a text box with Mean and Std Dev
+        textstr = '\n'.join((
+            r'$\mu=%.3f$' % (mean_val, ),
+            r'$\sigma=%.3f$' % (std_val, )))
+        props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='gray')
+        ax.text(0.70, 0.90, textstr, transform=ax.transAxes, fontsize=9,
+                verticalalignment='top', bbox=props)
+
+    plt.tight_layout()
+    
+    # Save as PDF (Vector format, never loses quality when zoomed in LaTeX)
+    output_path = os.path.join(output_dir, "kinematic_distributions.pdf")
+    plt.savefig(output_path, format='pdf', bbox_inches='tight')
+    plt.close()
+    
+    print(f"Success! IEEE-ready figure saved to {output_path}")
 if __name__ == "__main__":
-    get_model_architecture_onnx()
+    
+    # Point this to your actual generated CSV file
+    CSV_FILE = "D:\\Workspaces\\github\\NeuralDriver\\carla_0_9\\CARLA_0.9.15\\WindowsNoEditor\\PythonAPI\\carla-python-examples-main\\Map_Layouts\\lane_change_dataset_transition.csv" 
+    generate_histograms(CSV_FILE, output_dir=current_dir.parent / "Map_Layouts")
+    #get_model_architecture_onnx()
     #train()
